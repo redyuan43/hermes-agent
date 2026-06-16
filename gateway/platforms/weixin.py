@@ -34,6 +34,8 @@ from urllib.parse import quote, urlparse
 logger = logging.getLogger(__name__)
 
 WEIXIN_COPY_LINE_WIDTH = 120
+WEIXIN_LONG_REPLY_ATTACHMENT_THRESHOLD = 4000
+WEIXIN_LONG_REPLY_PREVIEW_LENGTH = 1200
 
 try:
     import aiohttp
@@ -1665,6 +1667,24 @@ class WeixinAdapter(BasePlatformAdapter):
             content, self.MAX_MESSAGE_LENGTH, self._split_multiline_messages,
         )
 
+    def _write_long_reply_attachment(self, content: str) -> str:
+        cache_dir = Path(self._hermes_home) / "cache" / "weixin_long_replies"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path = cache_dir / f"weixin-reply-{stamp}-{uuid.uuid4().hex[:8]}.md"
+        path.write_text(content, encoding="utf-8")
+        return str(path)
+
+    def _long_reply_preview(self, content: str, attachment_path: str) -> str:
+        preview = content[:WEIXIN_LONG_REPLY_PREVIEW_LENGTH].rstrip()
+        if len(content) > len(preview):
+            preview = f"{preview}\n..."
+        filename = Path(attachment_path).name
+        return (
+            f"这次回复较长（{len(content)} 字），我把完整内容放在附件里：{filename}\n\n"
+            f"预览：\n{preview}"
+        ).strip()
+
     def _rate_limit_cooldown_remaining(self) -> float:
         return max(0.0, self._rate_limit_circuit_until - time.monotonic())
 
@@ -1869,8 +1889,55 @@ class WeixinAdapter(BasePlatformAdapter):
                 except Exception as exc:
                     logger.warning("[%s] local file delivery failed for %s: %s", self.name, file_path, exc)
 
-            # Deliver text content.
-            chunks = [c for c in self._split_text(self.format_message(final_content)) if c and c.strip()]
+            # Deliver text content. Very long Weixin replies can stall iLink
+            # delivery when split into many text bubbles, so send a compact
+            # preview and attach the full Markdown instead.
+            formatted_content = self.format_message(final_content)
+            if len(formatted_content) > WEIXIN_LONG_REPLY_ATTACHMENT_THRESHOLD:
+                attachment_path = self._write_long_reply_attachment(formatted_content)
+                preview = self._long_reply_preview(formatted_content, attachment_path)
+                logger.info(
+                    "[%s] long text reply converted to attachment: chars=%d preview_chars=%d path=%s",
+                    self.name,
+                    len(formatted_content),
+                    len(preview),
+                    attachment_path,
+                )
+                client_id = f"hermes-weixin-{uuid.uuid4().hex}"
+                await self._send_text_chunk(
+                    chat_id=chat_id,
+                    chunk=preview,
+                    context_token=context_token,
+                    client_id=client_id,
+                )
+                last_message_id = client_id
+                doc_result = await self.send_document(
+                    chat_id=chat_id,
+                    file_path=attachment_path,
+                    caption="完整回复见附件。",
+                    metadata=metadata,
+                )
+                if not doc_result.success:
+                    logger.error(
+                        "[%s] long reply attachment delivery failed to=%s path=%s: %s",
+                        self.name,
+                        _safe_id(chat_id),
+                        attachment_path,
+                        doc_result.error,
+                    )
+                    fail_notice_id = f"hermes-weixin-{uuid.uuid4().hex}"
+                    await self._send_text_chunk(
+                        chat_id=chat_id,
+                        chunk="完整回复附件发送失败了；我已保留本地文件，稍后可以重新发送。",
+                        context_token=context_token,
+                        client_id=fail_notice_id,
+                    )
+                    last_message_id = fail_notice_id
+                else:
+                    last_message_id = doc_result.message_id or last_message_id
+                return SendResult(success=True, message_id=last_message_id)
+
+            chunks = [c for c in self._split_text(formatted_content) if c and c.strip()]
             for idx, chunk in enumerate(chunks):
                 client_id = f"hermes-weixin-{uuid.uuid4().hex}"
                 await self._send_text_chunk(

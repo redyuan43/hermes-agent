@@ -505,6 +505,53 @@ class TestWeixinChunkDelivery:
 
 
 class TestWeixinOutboundMedia:
+    def test_send_long_text_reply_as_preview_and_attachment(self, tmp_path):
+        adapter = _make_adapter()
+        adapter._hermes_home = str(tmp_path)
+        adapter._send_session = object()
+        adapter._token = "test-token"
+        adapter._token_store.get = lambda account_id, chat_id: None
+        adapter._send_text_chunk = AsyncMock()
+        adapter.send_document = AsyncMock(return_value=SendResult(success=True, message_id="doc-1"))
+
+        long_reply = "完整回复内容\n" + ("很长的内容。" * 900)
+
+        result = asyncio.run(adapter.send("wxid_test123", long_reply))
+
+        assert result.success is True
+        assert result.message_id == "doc-1"
+        adapter._send_text_chunk.assert_awaited_once()
+        preview = adapter._send_text_chunk.await_args.kwargs["chunk"]
+        assert "这次回复较长" in preview
+        assert "预览：" in preview
+        assert len(preview) < adapter.MAX_MESSAGE_LENGTH
+        adapter.send_document.assert_awaited_once()
+        attachment_path = adapter.send_document.await_args.kwargs["file_path"]
+        assert attachment_path.endswith(".md")
+        with open(attachment_path, encoding="utf-8") as handle:
+            assert handle.read() == adapter.format_message(long_reply)
+
+    def test_send_long_text_reply_reports_attachment_failure_without_resending_full_text(self, tmp_path):
+        adapter = _make_adapter()
+        adapter._hermes_home = str(tmp_path)
+        adapter._send_session = object()
+        adapter._token = "test-token"
+        adapter._token_store.get = lambda account_id, chat_id: None
+        adapter._send_text_chunk = AsyncMock()
+        adapter.send_document = AsyncMock(return_value=SendResult(success=False, error="upload failed"))
+
+        long_reply = "x" * 5000
+
+        result = asyncio.run(adapter.send("wxid_test123", long_reply))
+
+        assert result.success is True
+        assert adapter.send_document.await_count == 1
+        assert adapter._send_text_chunk.await_count == 2
+        sent_chunks = [call.kwargs["chunk"] for call in adapter._send_text_chunk.await_args_list]
+        assert all(len(chunk) < adapter.MAX_MESSAGE_LENGTH for chunk in sent_chunks)
+        assert all(chunk != long_reply for chunk in sent_chunks)
+        assert "附件发送失败" in sent_chunks[-1]
+
     def test_send_image_file_accepts_keyword_image_path(self):
         adapter = _make_adapter()
         expected = SendResult(success=True, message_id="msg-1")
