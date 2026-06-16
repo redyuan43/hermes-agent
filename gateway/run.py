@@ -14373,6 +14373,10 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             if _env_tp and not _tool_progress_configured
             else (_resolved_tp or _env_tp or "all")
         )
+        if progress_mode is False:
+            progress_mode = "off"
+        elif progress_mode is True:
+            progress_mode = "all"
         # Tool progress grouping: "accumulate" (edit one bubble) or "separate" (one msg per tool)
         progress_grouping = resolve_display_setting(user_config, platform_key, "tool_progress_grouping") or "accumulate"
         # Disable tool progress for webhooks - they don't support message editing,
@@ -15441,9 +15445,21 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             _bg_review_release = threading.Event()
             _bg_review_pending: list[str] = []
             _bg_review_pending_lock = threading.Lock()
+            _bg_review_notifications_enabled = bool(
+                resolve_display_setting(
+                    user_config,
+                    platform_key,
+                    "self_improvement_notifications",
+                    True,
+                )
+            )
 
             def _deliver_bg_review_message(message: str) -> None:
-                if not _status_adapter or not _run_still_current():
+                if (
+                    not _bg_review_notifications_enabled
+                    or not _status_adapter
+                    or not _run_still_current()
+                ):
                     return
                 safe_schedule_threadsafe(
                     _status_adapter.send(
