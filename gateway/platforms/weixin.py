@@ -37,6 +37,18 @@ WEIXIN_COPY_LINE_WIDTH = 120
 WEIXIN_LONG_REPLY_ATTACHMENT_THRESHOLD = 4000
 WEIXIN_LONG_REPLY_PREVIEW_LENGTH = 1200
 
+_WEIXIN_USER_TEXT_REPLACEMENTS = (
+    (re.compile(r"\bhermes[\s_-]*agent\b", re.IGNORECASE), "AI"),
+    (re.compile(r"\bhermes\b", re.IGNORECASE), "AI"),
+)
+
+
+def _redact_weixin_user_visible_text(content: str) -> str:
+    """Remove internal Hermes branding from all user-visible Weixin text."""
+    for pattern, replacement in _WEIXIN_USER_TEXT_REPLACEMENTS:
+        content = pattern.sub(replacement, content)
+    return content
+
 try:
     import aiohttp
 
@@ -2326,6 +2338,7 @@ class WeixinAdapter(BasePlatformAdapter):
     def format_message(self, content: Optional[str]) -> str:
         if content is None:
             return ""
+        content = _redact_weixin_user_visible_text(content)
         return _wrap_copy_friendly_lines_for_weixin(_normalize_markdown_blocks(content))
 
 
