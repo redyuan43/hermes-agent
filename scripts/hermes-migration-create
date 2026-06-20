@@ -1,0 +1,603 @@
+#!/usr/bin/env bash
+# Create a clean, encrypted Hermes migration bundle.
+#
+# The bundle contains a restore.sh plus an encrypted payload. The payload keeps
+# user state and service/proxy configuration, while excluding code checkouts,
+# virtualenvs, binaries, logs, caches, and historical debris.
+
+set -euo pipefail
+
+SCRIPT_NAME="$(basename "$0")"
+STAMP="$(date '+%Y%m%d-%H%M%S')"
+HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+OUTPUT_DIR="${OUTPUT_DIR:-$HOME}"
+REPO_URL="${REPO_URL:-https://github.com/NousResearch/hermes-agent.git}"
+REPO_BRANCH="${REPO_BRANCH:-main}"
+PASSPHRASE_FILE=""
+KEEP_PLAIN=false
+STOP_SERVICE=true
+INCLUDE_SCREEN_LOGIN=false
+
+usage() {
+  cat <<EOF
+Usage: $SCRIPT_NAME [options]
+
+Create a clean Hermes migration bundle for moving a user's Hermes gateway to
+another Linux device.
+
+Options:
+  -o, --output-dir DIR       Directory for the final bundle (default: \$HOME)
+  --hermes-home DIR          Hermes home to package (default: \$HERMES_HOME or ~/.hermes)
+  --repo-url URL             Hermes git repository for restore (default: $REPO_URL)
+  --branch NAME              Hermes git branch for restore (default: $REPO_BRANCH)
+  --passphrase-file FILE     Read encryption passphrase from FILE
+  --include-screen-login     Include ESP32/WeClaw screen-login configuration
+  --no-stop-service          Do not stop hermes-gateway.service while snapshotting
+  --keep-plain               Keep plaintext staging archive for debugging
+  -h, --help                 Show this help
+
+Output:
+  hermes-migration-<timestamp>.bundle.tar.gz
+
+The outer bundle is safe to inspect, but the payload inside is encrypted with
+openssl aes-256-cbc/pbkdf2. The payload contains tokens, chat history, and memory.
+EOF
+}
+
+die() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+log() {
+  printf '==> %s\n' "$*"
+}
+
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o|--output-dir)
+      OUTPUT_DIR="$2"
+      shift 2
+      ;;
+    --hermes-home)
+      HERMES_HOME="$2"
+      shift 2
+      ;;
+    --repo-url)
+      REPO_URL="$2"
+      shift 2
+      ;;
+    --branch)
+      REPO_BRANCH="$2"
+      shift 2
+      ;;
+    --passphrase-file)
+      PASSPHRASE_FILE="$2"
+      shift 2
+      ;;
+    --include-screen-login)
+      INCLUDE_SCREEN_LOGIN=true
+      shift
+      ;;
+    --no-stop-service)
+      STOP_SERVICE=false
+      shift
+      ;;
+    --keep-plain)
+      KEEP_PLAIN=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "unknown option: $1"
+      ;;
+  esac
+done
+
+for cmd in tar openssl python3 systemctl; do
+  have "$cmd" || die "required command not found: $cmd"
+done
+
+HERMES_HOME="$(cd "$HERMES_HOME" 2>/dev/null && pwd)" || die "Hermes home not found: $HERMES_HOME"
+OUTPUT_DIR="$(mkdir -p "$OUTPUT_DIR" && cd "$OUTPUT_DIR" && pwd)"
+
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/hermes-migration.XXXXXX")"
+PAYLOAD_DIR="$WORK_DIR/payload"
+BUNDLE_DIR="$WORK_DIR/hermes-migration-$STAMP"
+PLAIN_TAR="$WORK_DIR/hermes-migration-$STAMP.payload.tar.gz"
+ENC_PAYLOAD="$BUNDLE_DIR/payload.tar.gz.enc"
+FINAL_BUNDLE="$OUTPUT_DIR/hermes-migration-$STAMP.bundle.tar.gz"
+
+SERVICE_WAS_ACTIVE=false
+
+cleanup() {
+  local rc=$?
+  if [[ "$SERVICE_WAS_ACTIVE" == "true" ]]; then
+    systemctl --user start hermes-gateway.service >/dev/null 2>&1 || true
+  fi
+  if [[ "$KEEP_PLAIN" != "true" ]]; then
+    rm -f "$PLAIN_TAR"
+  fi
+  rm -rf "$WORK_DIR"
+  exit "$rc"
+}
+trap cleanup EXIT
+
+copy_if_exists() {
+  local src="$1"
+  local dst="$2"
+  if [[ -e "$src" ]]; then
+    mkdir -p "$(dirname "$dst")"
+    cp -a "$src" "$dst"
+  fi
+}
+
+copy_dir_contents_if_exists() {
+  local src="$1"
+  local dst="$2"
+  if [[ -d "$src" ]]; then
+    mkdir -p "$dst"
+    cp -a "$src"/. "$dst"/
+  fi
+}
+
+safe_copy_db() {
+  local src="$1"
+  local dst="$2"
+  [[ -f "$src" ]] || return 0
+  mkdir -p "$(dirname "$dst")"
+  python3 - "$src" "$dst" <<'PY'
+import sqlite3
+import sys
+from pathlib import Path
+
+src = Path(sys.argv[1])
+dst = Path(sys.argv[2])
+dst.parent.mkdir(parents=True, exist_ok=True)
+conn = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
+out = sqlite3.connect(dst)
+try:
+    conn.backup(out)
+finally:
+    out.close()
+    conn.close()
+PY
+}
+
+sha256_tree_json() {
+  local root="$1"
+  python3 - "$root" <<'PY'
+import hashlib
+import json
+import os
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+files = {}
+for path in sorted(p for p in root.rglob("*") if p.is_file()):
+    rel = path.relative_to(root).as_posix()
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    files[rel] = {"sha256": h.hexdigest(), "size": path.stat().st_size}
+json.dump(files, sys.stdout, ensure_ascii=False, indent=2, sort_keys=True)
+sys.stdout.write("\n")
+PY
+}
+
+log "Preparing clean staging directory"
+mkdir -p "$PAYLOAD_DIR/state/.hermes" "$PAYLOAD_DIR/services" "$PAYLOAD_DIR/proxy" "$BUNDLE_DIR"
+
+if [[ "$STOP_SERVICE" == "true" ]] && systemctl --user is-active --quiet hermes-gateway.service 2>/dev/null; then
+  SERVICE_WAS_ACTIVE=true
+  log "Stopping hermes-gateway.service for a consistent snapshot"
+  systemctl --user stop hermes-gateway.service
+fi
+
+log "Copying Hermes user state from $HERMES_HOME"
+copy_if_exists "$HERMES_HOME/config.yaml" "$PAYLOAD_DIR/state/.hermes/config.yaml"
+copy_if_exists "$HERMES_HOME/.env" "$PAYLOAD_DIR/state/.hermes/.env"
+copy_if_exists "$HERMES_HOME/auth.json" "$PAYLOAD_DIR/state/.hermes/auth.json"
+copy_if_exists "$HERMES_HOME/channel_directory.json" "$PAYLOAD_DIR/state/.hermes/channel_directory.json"
+copy_if_exists "$HERMES_HOME/gateway_state.json" "$PAYLOAD_DIR/state/.hermes/gateway_state.json"
+copy_if_exists "$HERMES_HOME/sessions/sessions.json" "$PAYLOAD_DIR/state/.hermes/sessions/sessions.json"
+copy_if_exists "$HERMES_HOME/cron/jobs.json" "$PAYLOAD_DIR/state/.hermes/cron/jobs.json"
+copy_dir_contents_if_exists "$HERMES_HOME/memories" "$PAYLOAD_DIR/state/.hermes/memories"
+copy_dir_contents_if_exists "$HERMES_HOME/weixin/accounts" "$PAYLOAD_DIR/state/.hermes/weixin/accounts"
+copy_dir_contents_if_exists "$HERMES_HOME/skills" "$PAYLOAD_DIR/state/.hermes/skills"
+
+log "Copying SQLite databases with sqlite3.backup()"
+safe_copy_db "$HERMES_HOME/state.db" "$PAYLOAD_DIR/state/.hermes/state.db"
+safe_copy_db "$HERMES_HOME/kanban.db" "$PAYLOAD_DIR/state/.hermes/kanban.db"
+
+log "Writing portable service templates"
+cat > "$PAYLOAD_DIR/services/hermes-gateway.service.template" <<'EOF'
+[Unit]
+Description=Hermes Agent Gateway - Messaging Platform Integration
+After=network-online.target xray.service
+Wants=network-online.target xray.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=%h/github/hermes-agent/venv/bin/python -m hermes_cli.main gateway run
+WorkingDirectory=%h/.hermes
+Environment="PATH=%h/github/hermes-agent/venv/bin:%h/.local/bin:%h/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="VIRTUAL_ENV=%h/github/hermes-agent/venv"
+Environment="HERMES_HOME=%h/.hermes"
+Restart=always
+RestartSec=5
+RestartForceExitStatus=75
+KillMode=mixed
+KillSignal=SIGTERM
+ExecReload=/bin/kill -USR1 $MAINPID
+TimeoutStopSec=210
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+EOF
+
+cat > "$PAYLOAD_DIR/services/hermes-gateway-proxy.conf.template" <<'EOF'
+[Unit]
+After=xray.service
+Wants=xray.service
+
+[Service]
+Environment="http_proxy=http://127.0.0.1:10808"
+Environment="https_proxy=http://127.0.0.1:10808"
+Environment="all_proxy=socks5h://127.0.0.1:10808"
+Environment="HTTP_PROXY=http://127.0.0.1:10808"
+Environment="HTTPS_PROXY=http://127.0.0.1:10808"
+Environment="ALL_PROXY=socks5h://127.0.0.1:10808"
+Environment="no_proxy=localhost,127.0.0.1,::1"
+Environment="NO_PROXY=localhost,127.0.0.1,::1"
+EOF
+
+cat > "$PAYLOAD_DIR/services/xray.service.template" <<'EOF'
+[Unit]
+Description=Xray proxy core using restored v2rayN config
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=XRAY_LOCATION_ASSET=%h/.local/share/v2rayN/bin
+WorkingDirectory=%h/.local/share/v2rayN/binConfigs
+ExecStart=%h/.local/share/v2rayN/bin/xray/xray run -c config.json
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+EOF
+
+log "Copying proxy configuration only"
+copy_if_exists "$HOME/.local/share/v2rayN/binConfigs/config.json" "$PAYLOAD_DIR/proxy/v2rayN/binConfigs/config.json"
+copy_if_exists "$HOME/.local/share/v2rayN/guiConfigs/guiNConfig.json" "$PAYLOAD_DIR/proxy/v2rayN/guiConfigs/guiNConfig.json"
+copy_if_exists "$HOME/.local/share/v2rayN/guiConfigs/guiNDB.db" "$PAYLOAD_DIR/proxy/v2rayN/guiConfigs/guiNDB.db"
+
+if [[ "$INCLUDE_SCREEN_LOGIN" == "true" ]]; then
+  log "Including optional ESP32/WeClaw screen-login configuration"
+  copy_if_exists "$HOME/.weclaw/config.json" "$PAYLOAD_DIR/screen-login/weclaw-config.json"
+  copy_if_exists "$HOME/.local/bin/weclaw-screen-login-until-success" "$PAYLOAD_DIR/screen-login/weclaw-screen-login-until-success"
+  copy_if_exists "$HOME/.config/systemd/user/nx2-jtop-uart.service" "$PAYLOAD_DIR/screen-login/nx2-jtop-uart.service.template"
+fi
+
+log "Writing manifest"
+cat > "$PAYLOAD_DIR/manifest.json" <<EOF
+{
+  "created_at": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')",
+  "created_by": "$USER",
+  "source_host": "$(hostname 2>/dev/null || echo unknown)",
+  "hermes_home": "$HERMES_HOME",
+  "repo_url": "$REPO_URL",
+  "repo_branch": "$REPO_BRANCH",
+  "include_screen_login": $INCLUDE_SCREEN_LOGIN,
+  "format": "hermes-clean-migration-v1"
+}
+EOF
+sha256_tree_json "$PAYLOAD_DIR" > "$PAYLOAD_DIR/checksums.json"
+
+cat > "$BUNDLE_DIR/README.txt" <<EOF
+Hermes migration bundle created $STAMP.
+
+Run on the target Linux device:
+
+  tar -xzf hermes-migration-$STAMP.bundle.tar.gz
+  cd hermes-migration-$STAMP
+  ./restore.sh
+
+The sensitive payload is encrypted. You need the passphrase used at creation.
+EOF
+
+cat > "$BUNDLE_DIR/restore.sh" <<'RESTORE'
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PAYLOAD_ENC="$SCRIPT_DIR/payload.tar.gz.enc"
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/hermes-restore.XXXXXX")"
+REPO_URL_DEFAULT="https://github.com/NousResearch/hermes-agent.git"
+REPO_BRANCH_DEFAULT="main"
+INSTALL_DIR="${HERMES_INSTALL_DIR:-$HOME/github/hermes-agent}"
+HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+PASSPHRASE_FILE=""
+SKIP_INSTALL=false
+SKIP_SEND_TEST=false
+
+usage() {
+  cat <<EOF
+Usage: ./restore.sh [options]
+
+Options:
+  --install-dir DIR         Hermes checkout path (default: ~/github/hermes-agent)
+  --hermes-home DIR         Hermes home path (default: ~/.hermes)
+  --passphrase-file FILE    Read decrypt passphrase from FILE
+  --skip-install            Do not clone/install Hermes; require existing checkout
+  --skip-send-test          Do not send the final Weixin test message
+  -h, --help                Show this help
+EOF
+}
+
+die() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+log() {
+  printf '==> %s\n' "$*"
+}
+
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --install-dir)
+      INSTALL_DIR="$2"
+      shift 2
+      ;;
+    --hermes-home)
+      HERMES_HOME="$2"
+      shift 2
+      ;;
+    --passphrase-file)
+      PASSPHRASE_FILE="$2"
+      shift 2
+      ;;
+    --skip-install)
+      SKIP_INSTALL=true
+      shift
+      ;;
+    --skip-send-test)
+      SKIP_SEND_TEST=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "unknown option: $1"
+      ;;
+  esac
+done
+
+cleanup() {
+  rm -rf "$WORK_DIR"
+}
+trap cleanup EXIT
+
+for cmd in tar openssl python3 curl systemctl loginctl; do
+  have "$cmd" || die "required command not found: $cmd"
+done
+
+[[ -f "$PAYLOAD_ENC" ]] || die "encrypted payload not found: $PAYLOAD_ENC"
+
+OPENSSL_PASS_ARGS=()
+if [[ -n "$PASSPHRASE_FILE" ]]; then
+  [[ -f "$PASSPHRASE_FILE" ]] || die "passphrase file not found: $PASSPHRASE_FILE"
+  OPENSSL_PASS_ARGS=(-pass "file:$PASSPHRASE_FILE")
+fi
+
+log "Decrypting payload"
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -salt -md sha256 \
+  "${OPENSSL_PASS_ARGS[@]}" \
+  -in "$PAYLOAD_ENC" -out "$WORK_DIR/payload.tar.gz"
+tar -xzf "$WORK_DIR/payload.tar.gz" -C "$WORK_DIR"
+PAYLOAD_DIR="$WORK_DIR/payload"
+[[ -f "$PAYLOAD_DIR/manifest.json" ]] || die "payload manifest missing"
+
+REPO_URL="$(python3 - "$PAYLOAD_DIR/manifest.json" "$REPO_URL_DEFAULT" <<'PY'
+import json, sys
+data=json.load(open(sys.argv[1]))
+print(data.get("repo_url") or sys.argv[2])
+PY
+)"
+REPO_BRANCH="$(python3 - "$PAYLOAD_DIR/manifest.json" "$REPO_BRANCH_DEFAULT" <<'PY'
+import json, sys
+data=json.load(open(sys.argv[1]))
+print(data.get("repo_branch") or sys.argv[2])
+PY
+)"
+
+log "Verifying payload checksums"
+python3 - "$PAYLOAD_DIR" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+checksums = json.load(open(root / "checksums.json"))
+errors = []
+for rel, meta in checksums.items():
+    if rel == "checksums.json":
+        continue
+    path = root / rel
+    if not path.is_file():
+        errors.append(f"{rel}: missing")
+        continue
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    if h.hexdigest() != meta["sha256"]:
+        errors.append(f"{rel}: checksum mismatch")
+if errors:
+    print("\n".join(errors), file=sys.stderr)
+    sys.exit(1)
+PY
+
+if [[ "$SKIP_INSTALL" != "true" ]]; then
+  have git || die "git is required to install Hermes"
+  log "Installing Hermes from $REPO_URL ($REPO_BRANCH)"
+  mkdir -p "$(dirname "$INSTALL_DIR")"
+  if [[ -d "$INSTALL_DIR/.git" ]]; then
+    git -C "$INSTALL_DIR" fetch origin "$REPO_BRANCH"
+    git -C "$INSTALL_DIR" checkout "$REPO_BRANCH"
+    git -C "$INSTALL_DIR" pull --ff-only origin "$REPO_BRANCH"
+  elif [[ -e "$INSTALL_DIR" ]]; then
+    die "$INSTALL_DIR exists but is not a git checkout; move it or use --skip-install"
+  else
+    git clone --branch "$REPO_BRANCH" "$REPO_URL" "$INSTALL_DIR"
+  fi
+  python3 -m venv "$INSTALL_DIR/venv"
+  "$INSTALL_DIR/venv/bin/python" -m pip install --upgrade pip
+  "$INSTALL_DIR/venv/bin/pip" install -e "$INSTALL_DIR[all]"
+else
+  [[ -x "$INSTALL_DIR/venv/bin/python" ]] || die "Hermes venv missing: $INSTALL_DIR/venv/bin/python"
+fi
+
+log "Restoring Hermes user state to $HERMES_HOME"
+mkdir -p "$HERMES_HOME"
+if systemctl --user is-active --quiet hermes-gateway.service 2>/dev/null; then
+  systemctl --user stop hermes-gateway.service
+fi
+cp -a "$PAYLOAD_DIR/state/.hermes"/. "$HERMES_HOME"/
+chmod 700 "$HERMES_HOME" || true
+chmod 600 "$HERMES_HOME/.env" "$HERMES_HOME/auth.json" "$HERMES_HOME/state.db" 2>/dev/null || true
+
+install_xray_if_needed() {
+  local xray_bin="$HOME/.local/share/v2rayN/bin/xray/xray"
+  if [[ -x "$xray_bin" ]]; then
+    return 0
+  fi
+  have python3 || die "python3 is required to unpack xray"
+  local arch asset tmp zip
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64|amd64) asset="Xray-linux-64.zip" ;;
+    aarch64|arm64) asset="Xray-linux-arm64-v8a.zip" ;;
+    armv7l) asset="Xray-linux-arm32-v7a.zip" ;;
+    *) die "unsupported architecture for automatic xray install: $arch" ;;
+  esac
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/xray-install.XXXXXX")"
+  zip="$tmp/$asset"
+  log "Downloading Xray-core $asset"
+  curl -fsSL "https://github.com/XTLS/Xray-core/releases/latest/download/$asset" -o "$zip"
+  mkdir -p "$HOME/.local/share/v2rayN/bin/xray" "$HOME/.local/share/v2rayN/bin"
+  python3 - "$zip" "$HOME/.local/share/v2rayN/bin/xray" <<'PY'
+import sys, zipfile
+from pathlib import Path
+zip_path = Path(sys.argv[1])
+dst = Path(sys.argv[2])
+with zipfile.ZipFile(zip_path) as zf:
+    for name in zf.namelist():
+        base = Path(name).name
+        if base in {"xray", "geoip.dat", "geosite.dat"}:
+            zf.extract(name, dst)
+            extracted = dst / name
+            target = dst / base
+            if extracted != target:
+                target.write_bytes(extracted.read_bytes())
+                extracted.unlink()
+PY
+  chmod +x "$xray_bin"
+  if [[ -f "$HOME/.local/share/v2rayN/bin/xray/geoip.dat" ]]; then
+    cp -f "$HOME/.local/share/v2rayN/bin/xray/geoip.dat" "$HOME/.local/share/v2rayN/bin/geoip.dat"
+  fi
+  if [[ -f "$HOME/.local/share/v2rayN/bin/xray/geosite.dat" ]]; then
+    cp -f "$HOME/.local/share/v2rayN/bin/xray/geosite.dat" "$HOME/.local/share/v2rayN/bin/geosite.dat"
+  fi
+  rm -rf "$tmp"
+}
+
+log "Restoring proxy configuration"
+mkdir -p "$HOME/.local/share/v2rayN"
+if [[ -d "$PAYLOAD_DIR/proxy/v2rayN" ]]; then
+  cp -a "$PAYLOAD_DIR/proxy/v2rayN"/. "$HOME/.local/share/v2rayN"/
+fi
+install_xray_if_needed
+
+log "Installing systemd user services"
+mkdir -p "$HOME/.config/systemd/user/hermes-gateway.service.d"
+cp "$PAYLOAD_DIR/services/hermes-gateway.service.template" "$HOME/.config/systemd/user/hermes-gateway.service"
+cp "$PAYLOAD_DIR/services/hermes-gateway-proxy.conf.template" "$HOME/.config/systemd/user/hermes-gateway.service.d/proxy.conf"
+cp "$PAYLOAD_DIR/services/xray.service.template" "$HOME/.config/systemd/user/xray.service"
+
+if loginctl show-user "$USER" >/dev/null 2>&1; then
+  loginctl enable-linger "$USER" || true
+fi
+systemctl --user daemon-reload
+systemctl --user enable xray.service hermes-gateway.service
+systemctl --user restart xray.service
+sleep 2
+systemctl --user restart hermes-gateway.service
+sleep 4
+
+log "Validating services"
+systemctl --user is-active --quiet xray.service || die "xray.service is not active"
+systemctl --user is-active --quiet hermes-gateway.service || die "hermes-gateway.service is not active"
+systemctl --user show hermes-gateway.service -p Environment -p DropInPaths --no-pager
+
+log "Validating ChatGPT reachability through proxy"
+curl -x http://127.0.0.1:10808 -sS -o /dev/null -w 'chatgpt_http=%{http_code} total=%{time_total}\n' \
+  https://chatgpt.com/backend-api/codex || die "ChatGPT proxy reachability check failed"
+
+if [[ "$SKIP_SEND_TEST" != "true" ]]; then
+  HOME_CHANNEL="$(grep -E '^WEIXIN_HOME_CHANNEL=' "$HERMES_HOME/.env" | tail -n 1 | cut -d= -f2- || true)"
+  if [[ -n "$HOME_CHANNEL" ]]; then
+    log "Sending Weixin validation message"
+    "$INSTALL_DIR/venv/bin/python" -m hermes_cli.main send --to "weixin:$HOME_CHANNEL" "微信目前连接正常，可以继续使用。"
+  else
+    echo "warning: WEIXIN_HOME_CHANNEL not found; skipping send test" >&2
+  fi
+fi
+
+log "Restore complete"
+RESTORE
+chmod +x "$BUNDLE_DIR/restore.sh"
+
+log "Creating encrypted payload"
+tar -czf "$PLAIN_TAR" -C "$WORK_DIR" payload
+OPENSSL_PASS_ARGS=()
+if [[ -n "$PASSPHRASE_FILE" ]]; then
+  [[ -f "$PASSPHRASE_FILE" ]] || die "passphrase file not found: $PASSPHRASE_FILE"
+  OPENSSL_PASS_ARGS=(-pass "file:$PASSPHRASE_FILE")
+fi
+openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -md sha256 \
+  "${OPENSSL_PASS_ARGS[@]}" \
+  -in "$PLAIN_TAR" -out "$ENC_PAYLOAD"
+
+log "Creating final bundle"
+tar -czf "$FINAL_BUNDLE" -C "$WORK_DIR" "$(basename "$BUNDLE_DIR")"
+if [[ "$KEEP_PLAIN" == "true" ]]; then
+  cp "$PLAIN_TAR" "$OUTPUT_DIR/$(basename "$PLAIN_TAR")"
+  log "Plaintext payload kept for debugging: $OUTPUT_DIR/$(basename "$PLAIN_TAR")"
+fi
+
+log "Migration bundle created: $FINAL_BUNDLE"
+log "Transfer it to the target device, extract it, then run ./restore.sh"
