@@ -336,6 +336,7 @@ PASSPHRASE_FILE=""
 SKIP_INSTALL=false
 SKIP_SEND_TEST=false
 FORCE_RESTORED_XRAY=false
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
 usage() {
   cat <<EOF
@@ -489,8 +490,14 @@ if [[ "$SKIP_INSTALL" != "true" ]]; then
       die "python3 venv failed and uv is not available. Install python3-venv or uv, then rerun restore.sh."
     fi
   fi
-  "$INSTALL_DIR/venv/bin/python" -m pip install --upgrade pip
-  "$INSTALL_DIR/venv/bin/pip" install -e "$INSTALL_DIR[all]"
+  if "$INSTALL_DIR/venv/bin/python" -m pip --version >/dev/null 2>&1; then
+    "$INSTALL_DIR/venv/bin/python" -m pip install --upgrade pip
+    "$INSTALL_DIR/venv/bin/pip" install -e "$INSTALL_DIR[all]"
+  elif have uv; then
+    uv pip install --python "$INSTALL_DIR/venv/bin/python" -e "$INSTALL_DIR[all]"
+  else
+    die "virtualenv has no pip and uv is not available"
+  fi
 else
   [[ -x "$INSTALL_DIR/venv/bin/python" ]] || die "Hermes venv missing: $INSTALL_DIR/venv/bin/python"
 fi
