@@ -480,7 +480,15 @@ if [[ "$SKIP_INSTALL" != "true" ]]; then
   else
     git clone --branch "$REPO_BRANCH" "$REPO_URL" "$INSTALL_DIR"
   fi
-  python3 -m venv "$INSTALL_DIR/venv"
+  if ! python3 -m venv "$INSTALL_DIR/venv"; then
+    if have uv; then
+      echo "warning: python3 venv failed; falling back to uv venv" >&2
+      rm -rf "$INSTALL_DIR/venv"
+      uv venv "$INSTALL_DIR/venv" --python 3.11
+    else
+      die "python3 venv failed and uv is not available. Install python3-venv or uv, then rerun restore.sh."
+    fi
+  fi
   "$INSTALL_DIR/venv/bin/python" -m pip install --upgrade pip
   "$INSTALL_DIR/venv/bin/pip" install -e "$INSTALL_DIR[all]"
 else
