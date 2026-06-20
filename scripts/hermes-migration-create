@@ -335,6 +335,7 @@ HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 PASSPHRASE_FILE=""
 SKIP_INSTALL=false
 SKIP_SEND_TEST=false
+FORCE_RESTORED_XRAY=false
 
 usage() {
   cat <<EOF
@@ -346,6 +347,7 @@ Options:
   --passphrase-file FILE    Read decrypt passphrase from FILE
   --skip-install            Do not clone/install Hermes; require existing checkout
   --skip-send-test          Do not send the final Weixin test message
+  --force-restored-xray     Install/start xray.service from the migrated proxy config even if 127.0.0.1:10808 already works
   -h, --help                Show this help
 EOF
 }
@@ -383,6 +385,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-send-test)
       SKIP_SEND_TEST=true
+      shift
+      ;;
+    --force-restored-xray)
+      FORCE_RESTORED_XRAY=true
       shift
       ;;
     -h|--help)
@@ -535,31 +541,64 @@ PY
   rm -rf "$tmp"
 }
 
-log "Restoring proxy configuration"
-mkdir -p "$HOME/.local/share/v2rayN"
-if [[ -d "$PAYLOAD_DIR/proxy/v2rayN" ]]; then
-  cp -a "$PAYLOAD_DIR/proxy/v2rayN"/. "$HOME/.local/share/v2rayN"/
+USE_EXISTING_PROXY=false
+if [[ "$FORCE_RESTORED_XRAY" != "true" ]]; then
+  if curl -x http://127.0.0.1:10808 -sS -o /dev/null --max-time 8 \
+      https://chatgpt.com/backend-api/codex >/dev/null 2>&1; then
+    USE_EXISTING_PROXY=true
+  fi
 fi
-install_xray_if_needed
+
+if [[ "$USE_EXISTING_PROXY" == "true" ]]; then
+  log "Using existing proxy on 127.0.0.1:10808"
+else
+  log "Restoring proxy configuration"
+  mkdir -p "$HOME/.local/share/v2rayN"
+  if [[ -d "$PAYLOAD_DIR/proxy/v2rayN" ]]; then
+    cp -a "$PAYLOAD_DIR/proxy/v2rayN"/. "$HOME/.local/share/v2rayN"/
+  fi
+  install_xray_if_needed
+fi
 
 log "Installing systemd user services"
 mkdir -p "$HOME/.config/systemd/user/hermes-gateway.service.d"
-cp "$PAYLOAD_DIR/services/hermes-gateway.service.template" "$HOME/.config/systemd/user/hermes-gateway.service"
-cp "$PAYLOAD_DIR/services/hermes-gateway-proxy.conf.template" "$HOME/.config/systemd/user/hermes-gateway.service.d/proxy.conf"
-cp "$PAYLOAD_DIR/services/xray.service.template" "$HOME/.config/systemd/user/xray.service"
+if [[ "$USE_EXISTING_PROXY" == "true" ]]; then
+  sed \
+    -e 's/^After=network-online.target xray.service$/After=network-online.target/' \
+    -e 's/^Wants=network-online.target xray.service$/Wants=network-online.target/' \
+    "$PAYLOAD_DIR/services/hermes-gateway.service.template" \
+    > "$HOME/.config/systemd/user/hermes-gateway.service"
+  awk '
+    /^\[Unit\]$/ {in_unit=1; print; next}
+    /^\[Service\]$/ {in_unit=0; print; next}
+    in_unit && ($0 ~ /^After=xray\.service$/ || $0 ~ /^Wants=xray\.service$/) {next}
+    {print}
+  ' "$PAYLOAD_DIR/services/hermes-gateway-proxy.conf.template" \
+    > "$HOME/.config/systemd/user/hermes-gateway.service.d/proxy.conf"
+else
+  cp "$PAYLOAD_DIR/services/hermes-gateway.service.template" "$HOME/.config/systemd/user/hermes-gateway.service"
+  cp "$PAYLOAD_DIR/services/hermes-gateway-proxy.conf.template" "$HOME/.config/systemd/user/hermes-gateway.service.d/proxy.conf"
+  cp "$PAYLOAD_DIR/services/xray.service.template" "$HOME/.config/systemd/user/xray.service"
+fi
 
 if loginctl show-user "$USER" >/dev/null 2>&1; then
   loginctl enable-linger "$USER" || true
 fi
 systemctl --user daemon-reload
-systemctl --user enable xray.service hermes-gateway.service
-systemctl --user restart xray.service
-sleep 2
+if [[ "$USE_EXISTING_PROXY" == "true" ]]; then
+  systemctl --user enable hermes-gateway.service
+else
+  systemctl --user enable xray.service hermes-gateway.service
+  systemctl --user restart xray.service
+  sleep 2
+fi
 systemctl --user restart hermes-gateway.service
 sleep 4
 
 log "Validating services"
-systemctl --user is-active --quiet xray.service || die "xray.service is not active"
+if [[ "$USE_EXISTING_PROXY" != "true" ]]; then
+  systemctl --user is-active --quiet xray.service || die "xray.service is not active"
+fi
 systemctl --user is-active --quiet hermes-gateway.service || die "hermes-gateway.service is not active"
 systemctl --user show hermes-gateway.service -p Environment -p DropInPaths --no-pager
 
