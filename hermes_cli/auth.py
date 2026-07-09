@@ -91,6 +91,7 @@ MINIMAX_OAUTH_REFRESH_SKEW_SECONDS = 60
 DEFAULT_QWEN_BASE_URL = "https://portal.qwen.ai/v1"
 DEFAULT_GITHUB_MODELS_BASE_URL = "https://api.githubcopilot.com"
 DEFAULT_COPILOT_ACP_BASE_URL = "acp://copilot"
+DEFAULT_CLAUDE_CODE_CLI_BASE_URL = "claude-code-cli://local"
 DEFAULT_OLLAMA_CLOUD_BASE_URL = "https://ollama.com/v1"
 STEPFUN_STEP_PLAN_INTL_BASE_URL = "https://api.stepfun.ai/step_plan/v1"
 STEPFUN_STEP_PLAN_CN_BASE_URL = "https://api.stepfun.com/step_plan/v1"
@@ -234,6 +235,12 @@ PROVIDER_REGISTRY: Dict[str, ProviderConfig] = {
         auth_type="external_process",
         inference_base_url=DEFAULT_COPILOT_ACP_BASE_URL,
         base_url_env_var="COPILOT_ACP_BASE_URL",
+    ),
+    "claude-code-cli": ProviderConfig(
+        id="claude-code-cli",
+        name="Claude Code CLI",
+        auth_type="external_process",
+        inference_base_url=DEFAULT_CLAUDE_CODE_CLI_BASE_URL,
     ),
     "gemini": ProviderConfig(
         id="gemini",
@@ -6112,11 +6119,50 @@ def get_api_key_provider_status(provider_id: str) -> Dict[str, Any]:
     }
 
 
+def _get_claude_code_cli_command() -> str:
+    """Return the configured Claude Code CLI executable command."""
+    try:
+        config = read_raw_config()
+    except Exception:
+        config = {}
+
+    claude_cfg = config.get("claude_code_cli") if isinstance(config, dict) else None
+    if isinstance(claude_cfg, dict):
+        command = str(claude_cfg.get("command") or "").strip()
+        if command:
+            return command
+
+    providers_cfg = config.get("providers") if isinstance(config, dict) else None
+    if isinstance(providers_cfg, dict):
+        for key in ("claude-code-cli", "claude_code_cli"):
+            provider_cfg = providers_cfg.get(key)
+            if isinstance(provider_cfg, dict):
+                command = str(provider_cfg.get("command") or "").strip()
+                if command:
+                    return command
+
+    return "claude"
+
+
 def get_external_process_provider_status(provider_id: str) -> Dict[str, Any]:
     """Status snapshot for providers that run a local subprocess."""
     pconfig = PROVIDER_REGISTRY.get(provider_id)
     if not pconfig or pconfig.auth_type != "external_process":
         return {"configured": False}
+
+    if provider_id == "claude-code-cli":
+        command = _get_claude_code_cli_command()
+        resolved_command = shutil.which(command) if command else None
+        return {
+            "configured": bool(resolved_command),
+            "provider": provider_id,
+            "name": pconfig.name,
+            "command": command,
+            "args": ["-p"],
+            "resolved_command": resolved_command,
+            "base_url": pconfig.inference_base_url,
+            "logged_in": bool(resolved_command),
+        }
 
     command = (
         os.getenv("HERMES_COPILOT_ACP_COMMAND", "").strip()
@@ -6161,7 +6207,7 @@ def get_auth_status(provider_id: Optional[str] = None) -> Dict[str, Any]:
         return get_gemini_oauth_auth_status()
     if target == "minimax-oauth":
         return get_minimax_oauth_auth_status()
-    if target == "copilot-acp":
+    if target in {"copilot-acp", "claude-code-cli"}:
         return get_external_process_provider_status(target)
     if target == "azure-foundry":
         return _get_azure_foundry_auth_status()
@@ -6310,6 +6356,26 @@ def resolve_external_process_provider_credentials(provider_id: str) -> Dict[str,
             provider=provider_id,
             code="invalid_provider",
         )
+
+    if provider_id == "claude-code-cli":
+        command = _get_claude_code_cli_command()
+        resolved_command = shutil.which(command) if command else None
+        if not resolved_command:
+            raise AuthError(
+                f"Could not find the Claude Code CLI command '{command}'. "
+                "Install Claude Code with `npm install -g @anthropic-ai/claude-code` "
+                "or set claude_code_cli.command in config.yaml.",
+                provider=provider_id,
+                code="missing_claude_code_cli",
+            )
+        return {
+            "provider": provider_id,
+            "api_key": "claude-code-cli",
+            "base_url": pconfig.inference_base_url,
+            "command": resolved_command,
+            "args": ["-p"],
+            "source": "process",
+        }
 
     base_url = os.getenv(pconfig.base_url_env_var, "").strip() if pconfig.base_url_env_var else ""
     if not base_url:
