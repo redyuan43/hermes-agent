@@ -137,6 +137,86 @@ class TestResolveTaskProviderModel:
         assert api_key == "resolved-token"
         assert api_mode is None
 
+    def test_resolve_provider_client_supports_claude_code_cli_reference(self, monkeypatch):
+        monkeypatch.setattr("hermes_cli.auth.shutil.which", lambda command: f"/usr/local/bin/{command}")
+
+        client, model = resolve_provider_client(
+            "claude-code-cli",
+            "claude-fable-5",
+            task="moa_reference",
+        )
+
+        assert model == "claude-fable-5"
+        assert str(client.base_url) == "claude-code-cli://local"
+        assert client.command == "/usr/local/bin/claude"
+
+    def test_resolve_provider_client_rejects_claude_code_cli_aggregator(self, monkeypatch):
+        monkeypatch.setattr("hermes_cli.auth.shutil.which", lambda command: f"/usr/local/bin/{command}")
+
+        client, model = resolve_provider_client(
+            "claude-code-cli",
+            "claude-fable-5",
+            task="moa_aggregator",
+        )
+
+        assert client is None
+        assert model is None
+
+    def test_cached_claude_code_cli_reference_does_not_bypass_aggregator_guard(self, monkeypatch):
+        import agent.auxiliary_client as aux
+
+        monkeypatch.setattr("hermes_cli.auth.shutil.which", lambda command: f"/usr/local/bin/{command}")
+        with aux._client_cache_lock:
+            aux._client_cache.clear()
+
+        try:
+            client, model = aux._get_cached_client(
+                "claude-code-cli",
+                "claude-fable-5",
+                task="moa_reference",
+            )
+            assert client is not None
+            assert model == "claude-fable-5"
+
+            client, model = aux._get_cached_client(
+                "claude-code-cli",
+                "claude-fable-5",
+                task="moa_aggregator",
+            )
+            assert client is None
+            assert model == "claude-fable-5"
+        finally:
+            with aux._client_cache_lock:
+                aux._client_cache.clear()
+
+    def test_call_llm_passes_task_to_explicit_claude_code_cli_provider(self):
+        fallback_client = MagicMock()
+        response = MagicMock()
+        response.choices = [MagicMock(message=MagicMock(content="fallback ok"))]
+        fallback_client.chat.completions.create.return_value = response
+        seen_tasks = []
+
+        def _fake_resolve_provider(provider, model=None, async_mode=False, **kwargs):
+            assert provider == "claude-code-cli"
+            seen_tasks.append(kwargs.get("task"))
+            return None, None
+
+        with patch("agent.auxiliary_client.resolve_provider_client", side_effect=_fake_resolve_provider), \
+             patch("agent.auxiliary_client._try_configured_fallback_for_unavailable_client",
+                   return_value=(fallback_client, "fallback-model", "fallback")), \
+             patch("agent.auxiliary_client._build_call_kwargs",
+                   return_value={"model": "fallback-model", "messages": [{"role": "user", "content": "hi"}]}):
+            result = call_llm(
+                task="moa_aggregator",
+                provider="claude-code-cli",
+                model="claude-fable-5",
+                messages=[{"role": "user", "content": "hi"}],
+            )
+
+        assert result is response
+        assert seen_tasks == ["moa_aggregator"]
+        fallback_client.chat.completions.create.assert_called_once()
+
     @pytest.mark.parametrize("provider", ["", "auto", "custom", "custom:local", "unknown-provider"])
     def test_explicit_base_url_without_first_class_provider_routes_as_custom(self, provider):
         resolved_provider, model, base_url, api_key, api_mode = _resolve_task_provider_model(

@@ -4217,6 +4217,15 @@ def _to_async_client(sync_client, model: str, is_vision: bool = False):
             return sync_client, model
     except ImportError:
         pass
+    try:
+        from agent.claude_code_cli_client import (
+            AsyncClaudeCodeCliClient,
+            ClaudeCodeCliClient,
+        )
+        if isinstance(sync_client, ClaudeCodeCliClient):
+            return AsyncClaudeCodeCliClient(sync_client), model
+    except ImportError:
+        pass
 
     async_kwargs = {
         "api_key": sync_client.api_key,
@@ -4900,6 +4909,23 @@ def resolve_provider_client(
             logger.debug("resolve_provider_client: %s (%s)", provider, final_model)
             return (_to_async_client(client, final_model, is_vision=is_vision) if async_mode
                     else (client, final_model))
+        if provider == "claude-code-cli":
+            if task and task != "moa_reference":
+                logger.debug(
+                    "resolve_provider_client: claude-code-cli is reference-only "
+                    "and was requested for task %s",
+                    task,
+                )
+                return None, None
+            command = str(creds.get("command", "")).strip() or "claude"
+            if not final_model:
+                final_model = "claude-fable-5"
+            from agent.claude_code_cli_client import ClaudeCodeCliClient
+
+            client = ClaudeCodeCliClient(command=command, model=final_model)
+            logger.debug("resolve_provider_client: %s (%s)", provider, final_model)
+            return (_to_async_client(client, final_model, is_vision=is_vision) if async_mode
+                    else (client, final_model))
         if provider not in _LOGGED_UNSUPPORTED_EXTPROC_KEYS:
             _LOGGED_UNSUPPORTED_EXTPROC_KEYS.add(provider)
             logger.debug("resolve_provider_client: external-process provider %s not "
@@ -5408,10 +5434,11 @@ def _client_cache_key(
 ) -> tuple:
     runtime = _normalize_main_runtime(main_runtime)
     runtime_key = tuple(runtime.get(field, "") for field in _MAIN_RUNTIME_FIELDS) if provider == "auto" else ()
-    # `auto` can now resolve through task-specific or main fallback policy,
-    # so the task participates in the cache key. Non-auto providers keep the
-    # old cache shape because the explicit provider/model tuple is sufficient.
-    task_key = (task or "") if provider == "auto" else ""
+    # `auto` can resolve through task-specific or main fallback policy, so the
+    # task participates in the cache key. Claude Code CLI is reference-only:
+    # keeping task in the key prevents a cached reference client from bypassing
+    # the resolver guard on non-reference calls.
+    task_key = (task or "") if provider in {"auto", "claude-code-cli"} else ""
     pool_hint = _pool_cache_hint(provider, main_runtime=main_runtime)
     # The model MUST participate in the key. Two concurrent auxiliary calls to
     # the SAME provider/base_url/key but DIFFERENT models (e.g. a MoA reference
@@ -6134,6 +6161,7 @@ def _build_call_kwargs(
         if (
             _is_anthropic_compat_endpoint(provider, _effective_base)
             or _is_nvidia_nim
+            or _provider_norm == "claude-code-cli"
         ):
             kwargs["max_tokens"] = max_tokens
 
@@ -6351,6 +6379,7 @@ def call_llm(
             api_key=resolved_api_key,
             api_mode=resolved_api_mode,
             main_runtime=main_runtime,
+            task=task,
         )
         if client is None:
             # When the user explicitly chose a non-OpenRouter provider but no
@@ -6968,6 +6997,8 @@ async def async_call_llm(
             base_url=resolved_base_url,
             api_key=resolved_api_key,
             api_mode=resolved_api_mode,
+            main_runtime=main_runtime,
+            task=task,
         )
         if client is None:
             _explicit = (resolved_provider or "").strip().lower()

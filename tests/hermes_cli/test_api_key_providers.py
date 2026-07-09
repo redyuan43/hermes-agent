@@ -30,6 +30,7 @@ class TestProviderRegistry:
 
     @pytest.mark.parametrize("provider_id,name,auth_type", [
         ("copilot-acp", "GitHub Copilot ACP", "external_process"),
+        ("claude-code-cli", "Claude Code CLI", "external_process"),
         ("copilot", "GitHub Copilot", "api_key"),
         ("huggingface", "Hugging Face", "api_key"),
         ("zai", "Z.AI / GLM", "api_key"),
@@ -381,6 +382,22 @@ class TestApiKeyProviderStatus:
         assert status["configured"] is True
         assert status["provider"] == "copilot-acp"
 
+    def test_claude_code_cli_status_detects_local_cli(self, monkeypatch):
+        from hermes_cli.config import get_config_path
+
+        config_path = get_config_path()
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text("claude_code_cli:\n  command: claude-dev\n", encoding="utf-8")
+        monkeypatch.setattr("hermes_cli.auth.shutil.which", lambda command: f"/opt/bin/{command}")
+
+        status = get_external_process_provider_status("claude-code-cli")
+
+        assert status["configured"] is True
+        assert status["logged_in"] is True
+        assert status["command"] == "claude-dev"
+        assert status["resolved_command"] == "/opt/bin/claude-dev"
+        assert status["base_url"] == "claude-code-cli://local"
+
     def test_non_api_key_provider(self):
         status = get_api_key_provider_status("nous")
         assert status["configured"] is False
@@ -486,6 +503,26 @@ class TestResolveApiKeyProviderCredentials:
         assert creds["base_url"] == "acp://copilot"
         assert creds["command"] == "/usr/local/bin/copilot"
         assert creds["args"] == ["--acp", "--stdio"]
+        assert creds["source"] == "process"
+
+    def test_resolve_claude_code_cli_with_local_cli(self, monkeypatch):
+        from hermes_cli.config import get_config_path
+
+        config_path = get_config_path()
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(
+            "providers:\n  claude-code-cli:\n    command: claude-dev\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("hermes_cli.auth.shutil.which", lambda command: f"/usr/local/bin/{command}")
+
+        creds = resolve_external_process_provider_credentials("claude-code-cli")
+
+        assert creds["provider"] == "claude-code-cli"
+        assert creds["api_key"] == "claude-code-cli"
+        assert creds["base_url"] == "claude-code-cli://local"
+        assert creds["command"] == "/usr/local/bin/claude-dev"
+        assert creds["args"] == ["-p"]
         assert creds["source"] == "process"
 
     def test_resolve_kimi_with_key(self, monkeypatch):
@@ -692,6 +729,14 @@ class TestRuntimeProviderResolution:
         assert result["base_url"] == "acp://copilot"
         assert result["command"] == "/usr/local/bin/copilot"
         assert result["args"] == ["--acp", "--stdio", "--debug"]
+
+    def test_runtime_claude_code_cli_is_auxiliary_only(self, monkeypatch):
+        monkeypatch.setattr("hermes_cli.auth.shutil.which", lambda command: f"/usr/local/bin/{command}")
+
+        from hermes_cli.runtime_provider import resolve_runtime_provider
+
+        with pytest.raises(AuthError, match="only supported for auxiliary"):
+            resolve_runtime_provider(requested="claude-code-cli")
 
 
 # =============================================================================

@@ -1846,6 +1846,20 @@ def resolve_runtime_provider(
             "requested_provider": requested_provider,
         }
 
+    if provider == "claude-code-cli":
+        if requested_provider != "auto":
+            raise AuthError(
+                "Claude Code CLI is only supported for auxiliary MoA reference "
+                "calls. It cannot be selected as the main model.provider because "
+                "the main agent runtime requires streaming and tool-call support.",
+                provider=provider,
+                code="unsupported_main_runtime",
+            )
+        logger.info(
+            "Auto-detected Claude Code CLI for main runtime, but it is auxiliary-only; "
+            "falling through to OpenRouter/custom resolution."
+        )
+
     # Anthropic (native Messages API)
     if provider == "anthropic":
         # Allow base URL override from config.yaml model.base_url, but only

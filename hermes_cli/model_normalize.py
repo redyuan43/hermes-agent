@@ -79,6 +79,7 @@ _DOT_TO_HYPHEN_PROVIDERS: frozenset[str] = frozenset({
 _STRIP_VENDOR_ONLY_PROVIDERS: frozenset[str] = frozenset({
     "copilot",
     "copilot-acp",
+    "claude-code-cli",
     "openai-codex",
 })
 
@@ -416,6 +417,13 @@ def normalize_model_for_provider(model_input: str, target_provider: str) -> str:
             return bare
         return _dots_to_hyphens(bare)
 
+    # --- Claude Code CLI accepts bare Claude aliases / model names.
+    if provider == "claude-code-cli":
+        if "/" in name:
+            _, bare_after_slash = name.split("/", 1)
+            return bare_after_slash.strip() or name
+        return name
+
     # --- Copilot / Copilot ACP: delegate to the Copilot-specific
     #     normalizer.  It knows about the alias table (vendor-prefix
     #     stripping for Anthropic/OpenAI, dash-to-dot repair for Claude)
@@ -470,4 +478,3 @@ def normalize_model_for_provider(model_input: str, target_provider: str) -> str:
 # ---------------------------------------------------------------------------
 # Batch / convenience helpers
 # ---------------------------------------------------------------------------
-
