@@ -60,6 +60,9 @@ function subscribeWindowSize(cb: () => void) {
 const viewportIsFullscreen = () =>
   window.innerWidth >= window.screen.width && window.innerHeight >= window.screen.height
 
+const isMobileRuntime = () =>
+  typeof document !== 'undefined' && document.documentElement.dataset.hermesPlatform === 'mobile'
+
 export function AppShell({
   children,
   leftStatusbarItems,
@@ -72,6 +75,7 @@ export function AppShell({
   terminalPaneOpen = false,
   titlebarTools
 }: AppShellProps) {
+  const mobileRuntime = isMobileRuntime()
   const sidebarOpen = useStore($sidebarOpen)
   const fileBrowserOpen = useStore($fileBrowserOpen)
   const panesFlipped = useStore($panesFlipped)
@@ -85,6 +89,7 @@ export function AppShell({
   // tool cluster. Gate on isSecondaryWindow, never the narrower new-session flag.
   const hideTitlebarControls = isSecondaryWindow()
   const titlebarControls = titlebarControlsPosition(connection?.windowButtonPosition, isFullscreen)
+  const titlebarHeight = mobileRuntime ? 48 : TITLEBAR_HEIGHT
   // Width Windows/Linux reserve for the OS-painted min/max/close overlay (zero
   // on macOS, where window controls sit on the left and are reported via
   // windowButtonPosition instead). The right tool cluster has to clear them.
@@ -105,7 +110,9 @@ export function AppShell({
   const leftEdgePaneOpen =
     !isSecondaryWindow() && ((!narrowViewport && collapsibleLeftPaneOpen) || persistentLeftPaneOpen)
 
-  const titlebarContentInset = leftEdgePaneOpen
+  const titlebarContentInset = mobileRuntime
+    ? 12
+    : leftEdgePaneOpen
     ? 0
     : titlebarControls.left + TITLEBAR_HEIGHT + Math.round(TITLEBAR_HEIGHT / 2)
 
@@ -152,7 +159,7 @@ export function AppShell({
           // Alias for shadcn <Sidebar> descendants. Resolves to the chat-sidebar
           // pane track via PaneShell's emitted --pane-chat-sidebar-width.
           '--sidebar-width': 'var(--pane-chat-sidebar-width)',
-          '--titlebar-height': `${TITLEBAR_HEIGHT}px`,
+          '--titlebar-height': `${titlebarHeight}px`,
           '--titlebar-content-inset': `${titlebarContentInset}px`,
           '--titlebar-controls-left': `${titlebarControls.left}px`,
           '--titlebar-controls-top': `${titlebarControls.top}px`,
@@ -166,7 +173,7 @@ export function AppShell({
         } as CSSProperties
       }
     >
-      {!hideTitlebarControls && (
+      {!mobileRuntime && !hideTitlebarControls && (
         <TitlebarControls leftTools={leftTitlebarTools} onOpenSettings={onOpenSettings} tools={titlebarTools} />
       )}
 

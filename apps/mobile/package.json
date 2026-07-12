@@ -1,0 +1,25 @@
+{
+  "name": "@hermes/mobile",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Android foldable client for Hermes Agent.",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5175",
+    "build": "tsc -p . --noEmit && vite build",
+    "android:add": "cap add android",
+    "android:sync": "npm run build && cap sync android",
+    "android:open": "cap open android",
+    "android:run": "npm run android:sync && cap run android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.4.1",
+    "@capacitor/core": "^8.4.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.4.1",
+    "@vitejs/plugin-react": "^6.0.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.10"
+  }
+}

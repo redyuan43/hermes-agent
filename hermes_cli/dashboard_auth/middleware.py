@@ -41,6 +41,8 @@ _GATE_PUBLIC_PREFIXES: tuple[str, ...] = (
     "/auth/password-login",
     "/auth/logout",
     "/login",
+    "/api/auth/mobile/login",
+    "/api/auth/mobile/refresh",
     "/api/auth/providers",
     "/assets/",
     "/favicon.ico",
@@ -76,6 +78,39 @@ def _client_ip(request: Request) -> str:
     if fwd:
         return fwd.split(",")[0].strip()
     return request.client.host if request.client else ""
+
+
+def _mobile_access_token(request: Request) -> str:
+    """Return the native client's session access token, if present."""
+    return request.headers.get("x-hermes-mobile-access", "").strip()
+
+
+def _verify_access_token(access_token: str, *, ip: str = ""):
+    """Verify an interactive session token against the registered providers."""
+    if not access_token:
+        return None, None
+    unreachable_provider: str | None = None
+    for provider in list_providers():
+        try:
+            session = provider.verify_session(access_token=access_token)
+        except ProviderError as error:
+            _log.warning(
+                "dashboard-auth: provider %r unreachable during verify: %s",
+                provider.name,
+                error,
+            )
+            audit_log(
+                AuditEvent.SESSION_VERIFY_FAILURE,
+                provider=provider.name,
+                reason="provider_unreachable",
+                ip=ip,
+            )
+            if unreachable_provider is None:
+                unreachable_provider = provider.name
+            continue
+        if session is not None:
+            return session, None
+    return None, unreachable_provider
 
 
 def _unauth_response(request: Request, *, reason: str) -> Response:
@@ -185,6 +220,23 @@ async def gated_auth_middleware(
     if _path_is_public(path):
         return await call_next(request)
 
+    mobile_access_token = _mobile_access_token(request)
+    if mobile_access_token:
+        session, unreachable_provider = _verify_access_token(
+            mobile_access_token,
+            ip=_client_ip(request),
+        )
+        if session is not None:
+            request.state.session = session
+            request.state.mobile_authenticated = True
+            return await call_next(request)
+        if unreachable_provider is not None:
+            return JSONResponse(
+                {"detail": f"Auth provider {unreachable_provider!r} unreachable"},
+                status_code=503,
+            )
+        return _unauth_response(request, reason="invalid_or_expired_session")
+
     at, _rt = read_session_cookies(request)
     if not at and not _rt:
         # Neither token present — no session at all. Nothing to verify or
@@ -207,41 +259,7 @@ async def gated_auth_middleware(
     # good refresh token — defeating the whole transparent-refresh feature.
     session = None
     if at:
-        # Try every registered provider's verify_session in turn. A provider
-        # that doesn't recognise the token returns None and we move on; the
-        # first provider that returns a Session wins.
-        #
-        # A provider may instead raise ProviderError (its IDP/JWKS is
-        # unreachable, so it can neither confirm nor deny the token). With
-        # multiple providers stacked, that MUST NOT abort the chain — the
-        # token may belong to a *different*, reachable provider. (Concretely:
-        # a self-hosted-OIDC session hits the `nous` provider first, which
-        # tries to reach Nous Portal's JWKS; if that's unreachable it raises,
-        # but the `self-hosted` provider can still verify the token.) So we
-        # remember the unreachable error and keep going. Only if NO provider
-        # verifies the token AND at least one was unreachable do we surface a
-        # 503 — distinguishing "transient IDP outage" (don't force re-login)
-        # from "token genuinely invalid" (fall through to refresh/relogin).
-        unreachable_provider: str | None = None
-        for provider in list_providers():
-            try:
-                session = provider.verify_session(access_token=at)
-            except ProviderError as e:
-                _log.warning(
-                    "dashboard-auth: provider %r unreachable during verify: %s",
-                    provider.name, e,
-                )
-                audit_log(
-                    AuditEvent.SESSION_VERIFY_FAILURE,
-                    provider=provider.name,
-                    reason="provider_unreachable",
-                    ip=_client_ip(request),
-                )
-                if unreachable_provider is None:
-                    unreachable_provider = provider.name
-                continue
-            if session is not None:
-                break
+        session, unreachable_provider = _verify_access_token(at, ip=_client_ip(request))
         if session is None and unreachable_provider is not None:
             # No provider could verify the token and at least one couldn't be
             # reached — treat as a transient outage rather than forcing a
@@ -365,4 +383,3 @@ def _attempt_refresh(request: Request, *, refresh_token):
         if new_session is not None:
             return new_session, provider.name
     return None
-

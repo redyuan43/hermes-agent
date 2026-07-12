@@ -216,6 +216,11 @@ export function DesktopController() {
   // collapse both sidebars (without touching their stored open state) so the
   // hover-reveal overlay becomes the way in. Restores once it's wide again.
   const narrowViewport = useMediaQuery(SIDEBAR_COLLAPSE_MEDIA_QUERY)
+  const innerMobileRuntime =
+    typeof document !== 'undefined' &&
+    document.documentElement.dataset.hermesPlatform === 'mobile' &&
+    document.documentElement.dataset.displayRole === 'inner'
+  const collapseSidebars = narrowViewport && !innerMobileRuntime
 
   const routedSessionId = routeSessionId(location.pathname)
   const routeToken = `${location.pathname}:${location.search}:${location.hash}`
@@ -1095,7 +1100,7 @@ export function DesktopController() {
     <Pane
       defaultOpen={false}
       disabled={!chatOpen}
-      forceCollapsed={narrowViewport}
+      forceCollapsed={collapseSidebars}
       hoverReveal
       id="file-browser"
       key="file-browser"
@@ -1146,7 +1151,7 @@ export function DesktopController() {
     >
       {!isSecondaryWindow() && (
         <Pane
-          forceCollapsed={narrowViewport}
+          forceCollapsed={collapseSidebars}
           hoverReveal
           id="chat-sidebar"
           maxWidth={SIDEBAR_MAX_WIDTH}

@@ -1,0 +1,128 @@
+@import '../../desktop/src/styles.css';
+
+:root {
+  --mobile-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --mobile-safe-left: env(safe-area-inset-left, 0px);
+  --mobile-safe-right: env(safe-area-inset-right, 0px);
+  --mobile-safe-top: env(safe-area-inset-top, 0px);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  min-height: 100%;
+}
+
+.mobile-setup {
+  align-items: center;
+  background: #f8faff;
+  color: #16213a;
+  display: flex;
+  min-height: 100%;
+  padding: max(1.25rem, var(--mobile-safe-top)) max(1.25rem, var(--mobile-safe-right)) max(1.25rem, var(--mobile-safe-bottom)) max(1.25rem, var(--mobile-safe-left));
+}
+
+.mobile-setup__content {
+  margin: 0 auto;
+  max-width: 30rem;
+  width: 100%;
+}
+
+.mobile-setup__eyebrow {
+  color: #3c67c9;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  margin: 0 0 0.6rem;
+  text-transform: uppercase;
+}
+
+.mobile-setup h1 {
+  font-size: 2rem;
+  line-height: 1.08;
+  margin: 0;
+}
+
+.mobile-setup__copy {
+  color: #52627f;
+  line-height: 1.5;
+  margin: 0.85rem 0 1.6rem;
+}
+
+.mobile-setup__form {
+  display: grid;
+  gap: 0.95rem;
+}
+
+.mobile-setup__form label {
+  color: #34425c;
+  display: grid;
+  font-size: 0.875rem;
+  font-weight: 600;
+  gap: 0.4rem;
+}
+
+.mobile-setup__form input,
+.mobile-setup__form select {
+  background: #fff;
+  border: 1px solid #c4ccda;
+  border-radius: 6px;
+  color: #16213a;
+  font: inherit;
+  min-height: 2.75rem;
+  padding: 0.65rem 0.75rem;
+  width: 100%;
+}
+
+.mobile-setup__form button {
+  background: #2457c5;
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  min-height: 2.9rem;
+}
+
+.mobile-setup__form button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.mobile-setup__error {
+  color: #b42318;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  margin: 0;
+}
+
+html[data-mobile-layout='compact'] .desktop-only,
+html[data-mobile-layout='compact'] [data-pet-overlay-launcher] {
+  display: none !important;
+}
+
+html[data-mobile-layout='compact'] [data-terminal] {
+  min-height: 15rem;
+}
+
+html[data-fold-posture='half-opened'] [data-mobile-hinge-sensitive] {
+  margin-block: 1.5rem;
+}
+
+@media (max-width: 479px), (max-height: 479px) {
+  body {
+    overscroll-behavior: none;
+  }
+
+  [data-mobile-primary] {
+    padding-bottom: calc(4rem + var(--mobile-safe-bottom));
+    padding-inline: max(0.75rem, var(--mobile-safe-left)) max(0.75rem, var(--mobile-safe-right));
+  }
+}
+
+@media (min-width: 760px) and (min-height: 480px) {
+  html[data-display-role='inner'] {
+    --mobile-workspace-rail-width: 16rem;
+  }
+}

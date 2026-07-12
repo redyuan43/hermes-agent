@@ -34,6 +34,7 @@ from hermes_cli.dashboard_auth.base import (
     InvalidCodeError,
     InvalidCredentialsError,
     ProviderError,
+    RefreshExpiredError,
 )
 from hermes_cli.dashboard_auth.cookies import (
     clear_pkce_cookie,
@@ -442,6 +443,86 @@ class _PasswordLoginBody(BaseModel):
     next: str = ""
 
 
+class _MobileLoginBody(BaseModel):
+    password: str
+    provider: str
+    username: str
+
+
+class _MobileRefreshBody(BaseModel):
+    refresh_token: str
+
+
+class _MobileLogoutBody(BaseModel):
+    refresh_token: str = ""
+
+
+def _mobile_session_response(session) -> dict[str, Any]:
+    """Serialize a provider session for Android's keystore-backed client."""
+    return {
+        "access_token": session.access_token,
+        "expires_at": session.expires_at,
+        "provider": session.provider,
+        "refresh_token": session.refresh_token,
+        "user": {
+            "display_name": session.display_name,
+            "email": session.email,
+            "id": session.user_id,
+        },
+    }
+
+
+def _password_login_session(request: Request, *, provider_name: str, username: str, password: str):
+    """Run the shared password-provider login flow without setting cookies."""
+    ip = _client_ip(request)
+    if _password_rate_limited(ip):
+        audit_log(
+            AuditEvent.LOGIN_FAILURE,
+            provider=provider_name,
+            reason="rate_limited",
+            ip=ip,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts. Try again shortly.",
+        )
+
+    provider = get_provider(provider_name)
+    if provider is None or not getattr(provider, "supports_password", False):
+        raise HTTPException(status_code=404, detail="Unknown provider")
+
+    try:
+        session = provider.complete_password_login(username=username, password=password)
+    except InvalidCredentialsError:
+        audit_log(
+            AuditEvent.LOGIN_FAILURE,
+            provider=provider_name,
+            reason="invalid_credentials",
+            ip=ip,
+        )
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    except NotImplementedError:
+        raise HTTPException(status_code=500, detail="Provider misconfigured")
+    except ProviderError as e:
+        audit_log(
+            AuditEvent.LOGIN_FAILURE,
+            provider=provider_name,
+            reason="provider_unreachable",
+            ip=ip,
+        )
+        raise HTTPException(status_code=503, detail=f"Provider unreachable: {e}")
+
+    audit_log(
+        AuditEvent.LOGIN_SUCCESS,
+        provider=provider_name,
+        user_id=session.user_id,
+        email=session.email,
+        org_id=session.org_id,
+        ip=ip,
+    )
+    return session
+
+
 @router.post("/auth/password-login", name="auth_password_login")
 async def auth_password_login(request: Request, body: _PasswordLoginBody):
     """Authenticate a username/password against a password provider.
@@ -459,64 +540,11 @@ async def auth_password_login(request: Request, body: _PasswordLoginBody):
       * backing store unreachable → 503
       * too many attempts from this IP → 429
     """
-    ip = _client_ip(request)
-    if _password_rate_limited(ip):
-        audit_log(
-            AuditEvent.LOGIN_FAILURE,
-            provider=body.provider,
-            reason="rate_limited",
-            ip=ip,
-        )
-        raise HTTPException(
-            status_code=429,
-            detail="Too many login attempts. Try again shortly.",
-        )
-
-    p = get_provider(body.provider)
-    if p is None or not getattr(p, "supports_password", False):
-        # Don't leak which providers exist or which support passwords —
-        # same 404 whether the provider is unknown or OAuth-only.
-        audit_log(
-            AuditEvent.LOGIN_FAILURE,
-            provider=body.provider,
-            reason="unknown_password_provider",
-            ip=ip,
-        )
-        raise HTTPException(status_code=404, detail="Unknown provider")
-
-    try:
-        session = p.complete_password_login(
-            username=body.username, password=body.password
-        )
-    except InvalidCredentialsError:
-        audit_log(
-            AuditEvent.LOGIN_FAILURE,
-            provider=body.provider,
-            reason="invalid_credentials",
-            ip=ip,
-        )
-        # Generic message — never distinguish unknown-user from wrong-password.
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    except NotImplementedError:
-        # supports_password was True but the method isn't actually
-        # implemented — a provider bug, not a client error.
-        raise HTTPException(status_code=500, detail="Provider misconfigured")
-    except ProviderError as e:
-        audit_log(
-            AuditEvent.LOGIN_FAILURE,
-            provider=body.provider,
-            reason="provider_unreachable",
-            ip=ip,
-        )
-        raise HTTPException(status_code=503, detail=f"Provider unreachable: {e}")
-
-    audit_log(
-        AuditEvent.LOGIN_SUCCESS,
-        provider=body.provider,
-        user_id=session.user_id,
-        email=session.email,
-        org_id=session.org_id,
-        ip=ip,
+    session = _password_login_session(
+        request,
+        provider_name=body.provider,
+        username=body.username,
+        password=body.password,
     )
 
     expires_in = max(60, session.expires_at - int(time.time()))
@@ -531,6 +559,53 @@ async def auth_password_login(request: Request, body: _PasswordLoginBody):
         prefix=_prefix(request),
     )
     return resp
+
+
+@router.post("/api/auth/mobile/login", name="auth_mobile_login")
+async def auth_mobile_login(request: Request, body: _MobileLoginBody):
+    """Log an Android client in without relying on cross-origin cookies."""
+    session = _password_login_session(
+        request,
+        provider_name=body.provider,
+        username=body.username,
+        password=body.password,
+    )
+    return _mobile_session_response(session)
+
+
+@router.post("/api/auth/mobile/refresh", name="auth_mobile_refresh")
+async def auth_mobile_refresh(request: Request, body: _MobileRefreshBody):
+    """Rotate a native client's session without exposing a browser cookie."""
+    refresh_token = body.refresh_token.strip()
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    for provider in list_providers():
+        try:
+            session = provider.refresh_session(refresh_token=refresh_token)
+        except RefreshExpiredError:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        except ProviderError as e:
+            raise HTTPException(status_code=503, detail=f"Provider unreachable: {e}")
+        if session is not None:
+            return _mobile_session_response(session)
+
+    raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+@router.post("/api/auth/mobile/logout", name="auth_mobile_logout")
+async def auth_mobile_logout(request: Request, body: _MobileLogoutBody):
+    """Revoke the supplied mobile refresh credential when its provider supports it."""
+    session = getattr(request.state, "session", None)
+    if session is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    provider = get_provider(session.provider)
+    if provider is not None and body.refresh_token:
+        try:
+            provider.revoke_session(refresh_token=body.refresh_token)
+        except Exception:
+            _log.warning("dashboard-auth: mobile logout revoke failed", exc_info=True)
+    return {"ok": True}
 
 
 @router.post("/auth/logout", name="auth_logout")

@@ -230,17 +230,6 @@ _reveal_timestamps: List[float] = []
 _REVEAL_MAX_PER_WINDOW = 5
 _REVEAL_WINDOW_SECONDS = 30
 
-# CORS: restrict to localhost origins only.  The web UI is intended to run
-# locally; binding to 0.0.0.0 with allow_origins=["*"] would let any website
-# read/modify config and secrets.
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # ---------------------------------------------------------------------------
 # Endpoints that do NOT require the session token.  Everything else under
 # /api/ is gated by the auth middleware below.
@@ -454,6 +443,14 @@ async def auth_middleware(request: Request, call_next):
                 content={"detail": "Unauthorized"},
             )
     return await call_next(request)
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ---------------------------------------------------------------------------
@@ -11022,6 +11019,13 @@ def _ws_host_origin_reason(ws: "WebSocket") -> Optional[str]:
     if not parsed.netloc:
         return f"origin_mismatch origin={origin} bound={bound_host}"
 
+    if (
+        getattr(app.state, "auth_required", False)
+        and parsed.scheme in {"http", "https"}
+        and parsed.netloc in {"localhost", "localhost:80", "localhost:443"}
+    ):
+        return None
+
     if not _is_accepted_host(parsed.netloc, bound_host):
         return f"origin_mismatch origin={origin} bound={bound_host}"
     return None
@@ -11502,6 +11506,130 @@ async def pty_ws(ws: WebSocket) -> None:
         except (asyncio.CancelledError, Exception):
             pass
         bridge.close()
+
+
+# ---------------------------------------------------------------------------
+# /api/terminal — interactive remote shell for native clients.
+# ---------------------------------------------------------------------------
+
+def _mobile_terminal_argv() -> tuple[list[str], str]:
+    if sys.platform.startswith("win"):
+        command = os.environ.get("COMSPEC") or "cmd.exe"
+        return [command], Path(command).name
+    shell = os.environ.get("SHELL") or "/bin/sh"
+    try:
+        if not Path(shell).is_file():
+            shell = "/bin/sh"
+    except OSError:
+        shell = "/bin/sh"
+    name = Path(shell).name
+    return [shell, *(["-il"] if name in {"bash", "zsh"} else ["-i"])], name
+
+
+def _mobile_terminal_cwd(raw: str) -> str:
+    fallback = _fs_default_cwd()
+    try:
+        candidate = Path((raw or "").strip()).expanduser().resolve(strict=False)
+        return str(candidate) if (raw or "").strip() and candidate.is_dir() else fallback
+    except (OSError, RuntimeError):
+        return fallback
+
+
+def _mobile_terminal_env() -> dict[str, str]:
+    env = os.environ.copy()
+    for key in ("NO_COLOR", "FORCE_COLOR", "COLORFGBG"):
+        env.pop(key, None)
+    env.update(COLORTERM="truecolor", LC_CTYPE=env.get("LC_CTYPE") or "UTF-8",
+               TERM="xterm-256color", TERM_PROGRAM="Hermes Mobile")
+    return env
+
+
+def _mobile_terminal_dimension(value: str | None, default: int) -> int:
+    try:
+        return max(1, int(value or default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _is_mobile_terminal_origin(ws: "WebSocket") -> bool:
+    parsed = urllib.parse.urlparse(ws.headers.get("origin", ""))
+    return parsed.scheme in {"http", "https"} and parsed.netloc in {
+        "localhost", "localhost:80", "localhost:443",
+    }
+
+
+@app.websocket("/api/terminal")
+async def mobile_terminal_ws(ws: WebSocket) -> None:
+    peer = ws.client.host if ws.client else "?"
+    auth_reason, cred = _ws_auth_reason(ws)
+    if auth_reason is not None:
+        _log.warning("mobile terminal auth rejected reason=%s cred=%s peer=%s", auth_reason, cred, peer)
+        await ws.close(code=4401, reason=_ws_close_reason(f"auth: {auth_reason}"))
+        return
+    request_reason = _ws_request_reason(ws)
+    if request_reason is not None or not _is_mobile_terminal_origin(ws):
+        reason = request_reason or "origin: native app required"
+        _log.warning("mobile terminal refused: %s peer=%s", reason, peer)
+        await ws.close(code=4403, reason=_ws_close_reason(reason))
+        return
+    await ws.accept()
+    if not _PTY_BRIDGE_AVAILABLE:
+        await ws.close(code=1011)
+        return
+    argv, shell = _mobile_terminal_argv()
+    cwd = _mobile_terminal_cwd(ws.query_params.get("cwd") or "")
+    try:
+        bridge = await asyncio.to_thread(
+            PtyBridge.spawn, argv, cwd=cwd, env=_mobile_terminal_env(),
+            cols=_mobile_terminal_dimension(ws.query_params.get("cols"), 80),
+            rows=_mobile_terminal_dimension(ws.query_params.get("rows"), 24),
+        )
+    except (PtyUnavailableError, FileNotFoundError, OSError) as exc:
+        await ws.send_text(f"\r\n\x1b[31mRemote terminal unavailable: {exc}\x1b[0m\r\n")
+        await ws.close(code=1011)
+        return
+    await ws.send_json({"cwd": cwd, "shell": shell, "type": "ready"})
+    loop = asyncio.get_running_loop()
+
+    async def pump_pty_to_ws() -> None:
+        try:
+            while True:
+                chunk = await loop.run_in_executor(None, bridge.read, _PTY_READ_CHUNK_TIMEOUT)
+                if chunk is None:
+                    return
+                if chunk:
+                    await ws.send_bytes(chunk)
+                else:
+                    await asyncio.sleep(0)
+        except (WebSocketDisconnect, RuntimeError):
+            return
+
+    reader_task = asyncio.create_task(pump_pty_to_ws())
+    try:
+        while True:
+            message = await ws.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
+            raw = message.get("bytes")
+            if raw is None:
+                text = message.get("text")
+                raw = text.encode("utf-8") if isinstance(text, str) else b""
+            if not raw:
+                continue
+            match = _RESIZE_RE.match(raw)
+            if match and match.end() == len(raw):
+                bridge.resize(cols=int(match.group(1)), rows=int(match.group(2)))
+            else:
+                bridge.write(raw)
+    except (RuntimeError, WebSocketDisconnect):
+        pass
+    finally:
+        reader_task.cancel()
+        try:
+            await reader_task
+        except (asyncio.CancelledError, Exception):
+            pass
+        await asyncio.to_thread(bridge.close)
 
 
 # ---------------------------------------------------------------------------
