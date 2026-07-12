@@ -14,6 +14,7 @@ describe('PreviewPane console state', () => {
   afterEach(() => {
     cleanup()
     $connection.set(null)
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
 
@@ -49,6 +50,7 @@ describe('PreviewPane console state', () => {
 
   it('does not rebuild the pane titlebar group for streamed console logs', () => {
     const setTitlebarToolGroup = vi.fn()
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 Electron/40.10.2')
 
     const rendered = render(
       <PreviewPane
@@ -78,5 +80,22 @@ describe('PreviewPane console state', () => {
     })
 
     expect(setTitlebarToolGroup).toHaveBeenCalledTimes(initialCalls)
+  })
+
+  it('uses an iframe for mobile and browser previews', () => {
+    const rendered = render(
+      <PreviewPane
+        target={{
+          kind: 'url',
+          label: 'Generated image',
+          previewKind: 'image',
+          source: '/tmp/generated.png',
+          url: 'blob:hermes-preview'
+        }}
+      />
+    )
+
+    expect(rendered.container.querySelector('iframe')).toBeInstanceOf(HTMLIFrameElement)
+    expect(rendered.container.querySelector('webview')).toBeNull()
   })
 })

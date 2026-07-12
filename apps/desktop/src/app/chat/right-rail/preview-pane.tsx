@@ -68,6 +68,10 @@ function isModuleMimeError(message: string): boolean {
   return lower.includes('failed to load module script') && lower.includes('mime type')
 }
 
+function supportsElectronWebview(): boolean {
+  return typeof navigator !== 'undefined' && /\bElectron\//.test(navigator.userAgent)
+}
+
 function PreviewLoadError({
   consoleHeight = 0,
   error,
@@ -146,6 +150,7 @@ export function PreviewPane({
   const [loadError, setLoadError] = useState<PreviewLoadErrorState | null>(null)
   const [localReloadKey, setLocalReloadKey] = useState(0)
   const isWebPreview = target.kind === 'url' || (target.previewKind === 'html' && target.renderMode !== 'source')
+  const usesElectronWebview = supportsElectronWebview()
   const currentLabel = compactUrl(currentUrl)
 
   const previewLabel =
@@ -214,12 +219,14 @@ export function PreviewPane({
       return
     }
 
-    if (webviewRef.current?.reloadIgnoringCache) {
+    if (!usesElectronWebview) {
+      setLocalReloadKey(key => key + 1)
+    } else if (webviewRef.current?.reloadIgnoringCache) {
       webviewRef.current.reloadIgnoringCache()
     } else {
       webviewRef.current?.reload?.()
     }
-  }, [isWebPreview])
+  }, [isWebPreview, usesElectronWebview])
 
   const appendConsoleEntry = useCallback(
     (entry: Omit<ConsoleEntry, 'id'>) => {
@@ -288,7 +295,7 @@ export function PreviewPane({
     }
 
     const tools: TitlebarTool[] = [
-      ...(isWebPreview
+      ...(isWebPreview && usesElectronWebview
         ? [
             {
               active: consoleOpen,
@@ -513,6 +520,33 @@ export function PreviewPane({
       return
     }
 
+    if (!usesElectronWebview) {
+      const frame = document.createElement('iframe')
+      frame.className = 'flex h-full w-full flex-1 border-0 bg-transparent'
+      frame.setAttribute('sandbox', 'allow-forms allow-popups allow-scripts')
+      frame.setAttribute('src', target.url)
+      frame.setAttribute('title', previewLabel || copy.fallbackTitle)
+
+      const onLoad = () => setLoading(false)
+      const onError = () => {
+        setLoadError({
+          description: copy.unreachableDescription,
+          url: target.url
+        })
+        setLoading(false)
+      }
+
+      frame.addEventListener('load', onLoad)
+      frame.addEventListener('error', onError)
+      host.appendChild(frame)
+
+      return () => {
+        frame.removeEventListener('load', onLoad)
+        frame.removeEventListener('error', onError)
+        frame.remove()
+      }
+    }
+
     const webview = document.createElement('webview') as PreviewWebview
     webview.className = 'flex h-full w-full flex-1 bg-transparent'
     webview.setAttribute('partition', 'persist:hermes-preview')
@@ -600,7 +634,7 @@ export function PreviewPane({
       webview.removeEventListener('did-stop-loading', onStop)
       webview.remove()
     }
-  }, [appendConsoleEntry, consoleState, copy, isWebPreview, target.url])
+  }, [appendConsoleEntry, consoleState, copy, isWebPreview, localReloadKey, previewLabel, target.url, usesElectronWebview])
 
   return (
     <aside className="relative flex h-full w-full min-w-0 flex-col overflow-hidden bg-transparent text-muted-foreground">

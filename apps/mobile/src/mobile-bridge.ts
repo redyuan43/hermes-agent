@@ -24,6 +24,7 @@ const CONNECTION_STORAGE_KEY = 'hermes.mobile.connection'
 let cachedConnection: MobileConnectionConfig | null | undefined
 let refreshingConnection: null | Promise<MobileConnectionConfig> = null
 const mobileTerminalSessions = new Map<string, MobileTerminalSession>()
+const mobilePreviewUrls = new Map<string, string>()
 
 interface MobileTerminalSession {
   dataListeners: Set<(payload: string) => void>
@@ -32,6 +33,16 @@ interface MobileTerminalSession {
   exitListeners: Set<(payload: { code: null | number; signal: null | number }) => void>
   pendingData: string[]
   socket: WebSocket
+}
+
+interface MobilePreviewTarget {
+  kind: 'file' | 'url'
+  label: string
+  mimeType?: string
+  path?: string
+  previewKind?: 'html' | 'image'
+  source: string
+  url: string
 }
 
 function normalizeBaseUrl(value: string): string {
@@ -151,6 +162,98 @@ async function mobileApi<T>(request: {
     return (await response.json()) as T
   } finally {
     window.clearTimeout(timeout)
+  }
+}
+
+async function fetchMobileFile(path: string): Promise<Response> {
+  const connection = await connectionOrThrow()
+  const requestPath = `/api/files/download?path=${encodeURIComponent(path)}`
+  let response = await fetch(`${connection.baseUrl}${requestPath}`, {
+    headers: await requestHeaders()
+  })
+
+  if (response.status === 401) {
+    const refreshed = await refreshMobileConnection()
+    response = await fetch(`${refreshed.baseUrl}${requestPath}`, {
+      headers: await requestHeaders()
+    })
+  }
+
+  if (!response.ok) {
+    throw new Error(`Could not open generated file (${response.status})`)
+  }
+
+  return response
+}
+
+function previewExtension(value: string): string {
+  const pathname = value.split(/[?#]/, 1)[0] || value
+  const index = pathname.lastIndexOf('.')
+  return index === -1 ? '' : pathname.slice(index).toLowerCase()
+}
+
+function previewLabel(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() || path
+}
+
+function previewPath(rawTarget: string, baseDir?: string): string | null {
+  const target = rawTarget.trim().replace(/^`|`$/g, '')
+  if (!target || /^https?:\/\//i.test(target)) {
+    return null
+  }
+
+  if (/^file:\/\//i.test(target)) {
+    try {
+      return decodeURIComponent(new URL(target).pathname)
+    } catch {
+      return target.replace(/^file:\/\//i, '')
+    }
+  }
+
+  if (target.startsWith('/')) {
+    return target
+  }
+
+  return baseDir ? `${baseDir.replace(/\/+$/, '')}/${target.replace(/^\.?\//, '')}` : null
+}
+
+async function normalizeMobilePreviewTarget(rawTarget: string, baseDir?: string): Promise<MobilePreviewTarget | null> {
+  const path = previewPath(rawTarget, baseDir)
+  const extension = previewExtension(path || rawTarget)
+  const previewKind = ['.avif', '.gif', '.jpeg', '.jpg', '.png', '.svg', '.webp'].includes(extension)
+    ? 'image'
+    : ['.htm', '.html'].includes(extension)
+      ? 'html'
+      : null
+
+  if (!previewKind || !path) {
+    return null
+  }
+
+  const previousUrl = mobilePreviewUrls.get(path)
+  if (previousUrl) {
+    return {
+      kind: previewKind === 'image' ? 'url' : 'file',
+      label: previewLabel(path),
+      path,
+      previewKind,
+      source: rawTarget,
+      url: previousUrl
+    }
+  }
+
+  const response = await fetchMobileFile(path)
+  const url = URL.createObjectURL(await response.blob())
+  mobilePreviewUrls.set(path, url)
+
+  return {
+    kind: previewKind === 'image' ? 'url' : 'file',
+    label: previewLabel(path),
+    mimeType: response.headers.get('content-type') || undefined,
+    path,
+    previewKind,
+    source: rawTarget,
+    url
   }
 }
 
@@ -431,7 +534,7 @@ export function installMobileBridge(): void {
     saveImageFromUrl: async () => unsupported('Image download'),
     saveImageBuffer: async () => unsupported('Image download'),
     saveClipboardImage: async () => unsupported('Clipboard image'),
-    normalizePreviewTarget: async () => null,
+    normalizePreviewTarget: normalizeMobilePreviewTarget,
     watchPreviewFile: async () => unsupported('Preview watching'),
     stopPreviewFileWatch: async () => false,
     sanitizeWorkspaceCwd: async (cwd?: null | string) => ({ cwd: cwd || '', sanitized: false }),

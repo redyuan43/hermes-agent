@@ -1,6 +1,7 @@
 import { atom, computed } from 'nanostores'
 
 import { $rightRailActiveTabId, RIGHT_RAIL_PREVIEW_TAB_ID, type RightRailTabId, selectRightRailTab } from './layout'
+import { setPaneOpen } from './panes'
 import { $activeSessionId, $selectedStoredSessionId } from './session'
 
 export interface PreviewTarget {
@@ -91,6 +92,7 @@ function isSamePreviewTarget(a: PreviewTarget | null, b: PreviewTarget | null): 
 export function setPreviewTarget(target: PreviewTarget | null) {
   if (isSamePreviewTarget($previewTarget.get(), target)) {
     if (target) {
+      setPaneOpen(RIGHT_RAIL_PREVIEW_TAB_ID, true)
       selectRightRailTab(RIGHT_RAIL_PREVIEW_TAB_ID)
     }
 
@@ -100,6 +102,7 @@ export function setPreviewTarget(target: PreviewTarget | null) {
   $previewTarget.set(target)
 
   if (target) {
+    setPaneOpen(RIGHT_RAIL_PREVIEW_TAB_ID, true)
     selectRightRailTab(RIGHT_RAIL_PREVIEW_TAB_ID)
   }
 }
@@ -115,6 +118,7 @@ function openFilePreviewTarget(target: PreviewTarget) {
   const tab: FilePreviewTab = { id, target }
 
   $filePreviewTabs.set(index === -1 ? [...current, tab] : current.map((item, i) => (i === index ? tab : item)))
+  setPaneOpen(RIGHT_RAIL_PREVIEW_TAB_ID, true)
   selectRightRailTab(id)
 }
 

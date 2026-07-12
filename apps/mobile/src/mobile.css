@@ -126,3 +126,7 @@ html[data-fold-posture='half-opened'] [data-mobile-hinge-sensitive] {
     --mobile-workspace-rail-width: 16rem;
   }
 }
+
+html[data-display-role='inner'] {
+  --chat-min-width: 0rem;
+}

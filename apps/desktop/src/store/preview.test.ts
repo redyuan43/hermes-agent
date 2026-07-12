@@ -17,6 +17,7 @@ import {
   progressPreviewServerRestart,
   setCurrentSessionPreviewTarget
 } from './preview'
+import { $paneOpen, setPaneOpen } from './panes'
 import { $activeSessionId, $selectedStoredSessionId } from './session'
 
 function previewTarget(source: string): PreviewTarget {
@@ -41,6 +42,7 @@ describe('preview store', () => {
     $selectedStoredSessionId.set(null)
     window.localStorage.clear()
     clearSessionPreviewRegistry()
+    setPaneOpen(RIGHT_RAIL_PREVIEW_TAB_ID, false)
   })
 
   afterEach(() => {
@@ -49,6 +51,7 @@ describe('preview store', () => {
     $selectedStoredSessionId.set(null)
     window.localStorage.clear()
     clearSessionPreviewRegistry()
+    setPaneOpen(RIGHT_RAIL_PREVIEW_TAB_ID, false)
   })
 
   it('does not notify status subscribers for restart progress text', () => {
@@ -131,5 +134,13 @@ describe('preview store', () => {
     expect($filePreviewTarget.get()).toBeNull()
     expect($rightRailActiveTabId.get()).toBe(RIGHT_RAIL_PREVIEW_TAB_ID)
     expect($previewTarget.get()).toEqual(withRenderMode(live, 'preview'))
+  })
+
+  it('reopens the preview pane for a new tool artifact', () => {
+    setPaneOpen(RIGHT_RAIL_PREVIEW_TAB_ID, false)
+
+    setCurrentSessionPreviewTarget(previewTarget('/work/demo.html'), 'tool-result')
+
+    expect($paneOpen(RIGHT_RAIL_PREVIEW_TAB_ID).get()).toBe(true)
   })
 })
