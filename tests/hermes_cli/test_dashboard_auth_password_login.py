@@ -335,6 +335,113 @@ class TestPasswordLoginRoute:
 
 
 # ---------------------------------------------------------------------------
+# /api/auth/mobile/* — Android bearer-session flow
+# ---------------------------------------------------------------------------
+
+
+class TestMobilePasswordSession:
+    def test_mobile_cors_preflight_reaches_the_authenticated_api(self, gated_app):
+        response = gated_app.options(
+            "/api/config",
+            headers={
+                "Origin": "https://localhost",
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "x-hermes-mobile-access",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == "https://localhost"
+        assert "x-hermes-mobile-access" in response.headers[
+            "access-control-allow-headers"
+        ].lower()
+
+    def test_mobile_cors_does_not_allow_other_web_origins(self, gated_app):
+        response = gated_app.options(
+            "/api/config",
+            headers={
+                "Origin": "https://evil.test",
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "x-hermes-mobile-access",
+            },
+        )
+
+        assert response.status_code == 400
+        assert "access-control-allow-origin" not in response.headers
+
+    def test_mobile_login_returns_tokens_without_setting_cookies(self, gated_app):
+        response = gated_app.post(
+            "/api/auth/mobile/login",
+            json={"provider": "testpw", "username": "admin", "password": "hunter2"},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["provider"] == "testpw"
+        assert body["access_token"]
+        assert body["refresh_token"]
+        assert body["user"]["id"] == "admin"
+        assert "set-cookie" not in {key.lower() for key in response.headers}
+
+    def test_mobile_access_token_authenticates_protected_requests(self, gated_app):
+        login = gated_app.post(
+            "/api/auth/mobile/login",
+            json={"provider": "testpw", "username": "admin", "password": "hunter2"},
+        )
+        token = login.json()["access_token"]
+
+        response = gated_app.get("/api/auth/me", headers={"X-Hermes-Mobile-Access": token})
+
+        assert response.status_code == 200
+        assert response.json()["user_id"] == "admin"
+        assert response.json()["provider"] == "testpw"
+
+    def test_mobile_access_token_can_mint_a_ws_ticket(self, gated_app):
+        login = gated_app.post(
+            "/api/auth/mobile/login",
+            json={"provider": "testpw", "username": "admin", "password": "hunter2"},
+        )
+
+        response = gated_app.post(
+            "/api/auth/ws-ticket",
+            headers={"X-Hermes-Mobile-Access": login.json()["access_token"]},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["ticket"]
+
+    def test_mobile_refresh_rotates_a_session_without_cookies(self, gated_app):
+        login = gated_app.post(
+            "/api/auth/mobile/login",
+            json={"provider": "testpw", "username": "admin", "password": "hunter2"},
+        ).json()
+
+        refresh = gated_app.post(
+            "/api/auth/mobile/refresh",
+            json={"refresh_token": login["refresh_token"]},
+        )
+
+        assert refresh.status_code == 200
+        rotated = refresh.json()
+        assert rotated["access_token"]
+        assert rotated["refresh_token"]
+        response = gated_app.get(
+            "/api/auth/me",
+            headers={"X-Hermes-Mobile-Access": rotated["access_token"]},
+        )
+        assert response.status_code == 200
+
+    def test_invalid_mobile_access_token_is_rejected(self, gated_app):
+        response = gated_app.get(
+            "/api/auth/me",
+            headers={"X-Hermes-Mobile-Access": "not-a-valid-token"},
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
 # Transparent refresh — expired access token, live refresh token
 # ---------------------------------------------------------------------------
 

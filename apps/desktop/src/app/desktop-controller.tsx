@@ -206,6 +206,22 @@ export function DesktopController() {
   // collapse both sidebars (without touching their stored open state) so the
   // hover-reveal overlay becomes the way in. Restores once it's wide again.
   const narrowViewport = useMediaQuery(SIDEBAR_COLLAPSE_MEDIA_QUERY)
+  const innerMobileRuntime =
+    typeof document !== 'undefined' &&
+    document.documentElement.dataset.hermesPlatform === 'mobile' &&
+    document.documentElement.dataset.displayRole === 'inner'
+  // The Fold inner display is about 690 CSS px wide: enough for the sessions
+  // rail plus a usable composer, but below the desktop-only collapse point.
+  // Keep the rail docked there so multiple sessions remain directly tappable.
+  const collapseSidebars = narrowViewport && !innerMobileRuntime
+  // The SM-F9360 cover display is about 344dp wide. It is narrower than the
+  // regular rail-collapse threshold, but the terminal must also avoid its
+  // otherwise-valid 42vw column because that leaves too little room to type.
+  const compactViewport = useMediaQuery('(max-width: 479px), (max-height: 479px)')
+  const coverMobileRuntime =
+    compactViewport &&
+    typeof document !== 'undefined' &&
+    document.documentElement.dataset.hermesPlatform === 'mobile'
 
   const routedSessionId = routeSessionId(location.pathname)
   const routeToken = `${location.pathname}:${location.search}:${location.hash}`
@@ -1175,12 +1191,12 @@ export function DesktopController() {
   // hover-reveal overlays (narrow window) don't take a column, so they don't count.
   const railColumnOpen =
     (chatOpen && Boolean(previewTarget || filePreviewTarget) && previewPaneOpen) ||
-    (chatOpen && !narrowViewport && fileBrowserOpen) ||
-    (chatOpen && Boolean(currentCwd.trim()) && !narrowViewport && reviewOpen)
+    (chatOpen && !collapseSidebars && fileBrowserOpen) ||
+    (chatOpen && Boolean(currentCwd.trim()) && !collapseSidebars && reviewOpen)
 
   // Once the terminal would share its rail with another sidebar, drop it to a
   // full-width row beneath them rather than cramming in one more skinny column.
-  const terminalAsRow = terminalSidebarOpen && railColumnOpen
+  const terminalAsRow = terminalSidebarOpen && (railColumnOpen || coverMobileRuntime)
 
   const previewPane = (
     <Pane
@@ -1203,7 +1219,7 @@ export function DesktopController() {
     <Pane
       defaultOpen={false}
       disabled={!chatOpen}
-      forceCollapsed={narrowViewport}
+      forceCollapsed={collapseSidebars}
       hoverReveal
       id="file-browser"
       key="file-browser"
@@ -1233,8 +1249,8 @@ export function DesktopController() {
       // gate so the pane stays mounted as a collapsed overlay — `toggleReview`
       // then slides it in/out via the forced-reveal pin, exactly like ⌘B for the
       // sidebar. Still requires a repo (no diffs to show otherwise).
-      disabled={!chatOpen || !currentCwd.trim() || (!narrowViewport && !reviewOpen)}
-      forceCollapsed={narrowViewport}
+      disabled={!chatOpen || !currentCwd.trim() || (!collapseSidebars && !reviewOpen)}
+      forceCollapsed={collapseSidebars}
       hoverReveal
       id={REVIEW_PANE_ID}
       key="review"
@@ -1296,7 +1312,7 @@ export function DesktopController() {
     >
       {!isSecondaryWindow() && (
         <Pane
-          forceCollapsed={narrowViewport}
+          forceCollapsed={collapseSidebars}
           hoverReveal
           id="chat-sidebar"
           maxWidth={SIDEBAR_MAX_WIDTH}

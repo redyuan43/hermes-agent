@@ -282,17 +282,6 @@ _reveal_timestamps: List[float] = []
 _REVEAL_MAX_PER_WINDOW = 5
 _REVEAL_WINDOW_SECONDS = 30
 
-# CORS: restrict to localhost origins only.  The web UI is intended to run
-# locally; binding to 0.0.0.0 with allow_origins=["*"] would let any website
-# read/modify config and secrets.
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # ---------------------------------------------------------------------------
 # Endpoints that do NOT require the session token.  Everything else under
 # /api/ is gated by the auth middleware below.
@@ -598,6 +587,18 @@ async def _token_auth_seam(request: Request, call_next):
     """
     from hermes_cli.dashboard_auth.token_auth import token_auth_middleware
     return await token_auth_middleware(request, call_next)
+
+
+# CORS: restrict to localhost origins only. The web UI is intended to run
+# locally; binding to 0.0.0.0 with allow_origins=["*"] would let any website
+# read/modify config and secrets. This must be registered after the HTTP auth
+# middlewares so preflight OPTIONS requests reach CORS before auth rejects them.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ---------------------------------------------------------------------------
@@ -12636,6 +12637,18 @@ def _ws_host_origin_reason(ws: "WebSocket") -> Optional[str]:
     if not parsed.netloc:
         return f"origin_mismatch origin={origin} bound={bound_host}"
 
+    # Capacitor Android apps are packaged WebViews. They originate at the local
+    # app authority (normally https://localhost) but authenticate every REST
+    # request with a mobile access credential and every WebSocket with a
+    # short-lived, single-use ticket. Treat that narrow native origin like
+    # Electron's non-web scheme without weakening the ticket requirement.
+    if (
+        getattr(app.state, "auth_required", False)
+        and parsed.scheme in {"http", "https"}
+        and parsed.netloc in {"localhost", "localhost:80", "localhost:443"}
+    ):
+        return None
+
     if not _is_accepted_host(parsed.netloc, bound_host):
         return f"origin_mismatch origin={origin} bound={bound_host}"
     return None
@@ -13781,6 +13794,181 @@ async def pty_ws(ws: WebSocket) -> None:
 
             bridge.write(raw)
     except WebSocketDisconnect:
+        pass
+    finally:
+        reader_task.cancel()
+        try:
+            await reader_task
+        except (asyncio.CancelledError, Exception):
+            pass
+        await asyncio.to_thread(bridge.close)
+
+
+# ---------------------------------------------------------------------------
+# /api/terminal — interactive remote shell for native clients.
+#
+# This deliberately differs from /api/pty: /api/pty hosts the full Hermes TUI
+# for the browser dashboard, while this endpoint hosts one ordinary shell for a
+# trusted native client. The same single-use dashboard-auth ticket protects the
+# upgrade, so a mobile access token never appears in a WebSocket URL.
+# ---------------------------------------------------------------------------
+
+def _mobile_terminal_argv() -> tuple[list[str], str]:
+    """Return an interactive shell command suitable for the gateway host."""
+    if sys.platform.startswith("win"):
+        command = os.environ.get("COMSPEC") or "cmd.exe"
+        return [command], Path(command).name
+
+    shell = os.environ.get("SHELL") or "/bin/sh"
+    try:
+        if not Path(shell).is_file():
+            shell = "/bin/sh"
+    except OSError:
+        shell = "/bin/sh"
+
+    name = Path(shell).name
+    args = ["-il"] if name in {"bash", "zsh"} else ["-i"]
+    return [shell, *args], name
+
+
+def _mobile_terminal_cwd(raw: str) -> str:
+    """Resolve a requested existing directory, falling back to Hermes' cwd."""
+    fallback = _fs_default_cwd()
+    candidate = (raw or "").strip()
+    if not candidate:
+        return fallback
+    try:
+        resolved = Path(candidate).expanduser().resolve(strict=False)
+        if resolved.is_dir():
+            return str(resolved)
+    except (OSError, RuntimeError):
+        pass
+    return fallback
+
+
+def _mobile_terminal_env() -> dict[str, str]:
+    """Keep a native shell interactive without inheriting a host TTY's theme."""
+    env = os.environ.copy()
+    for key in ("NO_COLOR", "FORCE_COLOR", "COLORFGBG"):
+        env.pop(key, None)
+    env["COLORTERM"] = "truecolor"
+    env["LC_CTYPE"] = env.get("LC_CTYPE") or "UTF-8"
+    env["TERM"] = "xterm-256color"
+    env["TERM_PROGRAM"] = "Hermes Mobile"
+    return env
+
+
+def _mobile_terminal_dimension(value: str | None, default: int) -> int:
+    try:
+        return max(1, int(value or default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _is_mobile_terminal_origin(ws: "WebSocket") -> bool:
+    """Only Capacitor's local WebView origin may request a raw shell."""
+    origin = ws.headers.get("origin", "")
+    parsed = urllib.parse.urlparse(origin)
+    return (
+        parsed.scheme in {"http", "https"}
+        and parsed.netloc in {"localhost", "localhost:80", "localhost:443"}
+    )
+
+
+@app.websocket("/api/terminal")
+async def mobile_terminal_ws(ws: WebSocket) -> None:
+    """Bridge one authenticated native-client shell through a PTY."""
+    peer = ws.client.host if ws.client else "?"
+    auth_reason, cred = _ws_auth_reason(ws)
+    mode = _ws_auth_mode()
+    if auth_reason is not None:
+        _log.warning(
+            "mobile terminal auth rejected reason=%s mode=%s cred=%s peer=%s",
+            auth_reason,
+            mode,
+            cred,
+            peer,
+        )
+        await ws.close(code=4401, reason=_ws_close_reason(f"auth: {auth_reason}"))
+        return
+
+    request_reason = _ws_request_reason(ws)
+    if request_reason is not None:
+        _log.warning("mobile terminal refused: %s peer=%s", request_reason, peer)
+        await ws.close(code=4403, reason=_ws_close_reason(request_reason))
+        return
+    if not _is_mobile_terminal_origin(ws):
+        _log.warning("mobile terminal refused: non-native origin peer=%s", peer)
+        await ws.close(code=4403, reason=_ws_close_reason("origin: native app required"))
+        return
+
+    await ws.accept()
+    if not _PTY_BRIDGE_AVAILABLE:
+        await ws.send_text("\r\n\x1b[31mRemote terminal is unavailable on this Hermes host.\x1b[0m\r\n")
+        await ws.close(code=1011)
+        return
+
+    argv, shell = _mobile_terminal_argv()
+    cwd = _mobile_terminal_cwd(ws.query_params.get("cwd") or "")
+    cols = _mobile_terminal_dimension(ws.query_params.get("cols"), 80)
+    rows = _mobile_terminal_dimension(ws.query_params.get("rows"), 24)
+    try:
+        bridge = await asyncio.to_thread(
+            PtyBridge.spawn,
+            argv,
+            cwd=cwd,
+            env=_mobile_terminal_env(),
+            cols=cols,
+            rows=rows,
+        )
+    except PtyUnavailableError as exc:
+        await ws.send_text(f"\r\n\x1b[31mRemote terminal unavailable: {exc}\x1b[0m\r\n")
+        await ws.close(code=1011)
+        return
+    except (FileNotFoundError, OSError) as exc:
+        await ws.send_text(f"\r\n\x1b[31mRemote terminal failed to start: {exc}\x1b[0m\r\n")
+        await ws.close(code=1011)
+        return
+
+    await ws.send_json({"cwd": cwd, "shell": shell, "type": "ready"})
+    loop = asyncio.get_running_loop()
+
+    async def pump_pty_to_ws() -> None:
+        try:
+            while True:
+                chunk = await loop.run_in_executor(None, bridge.read, _PTY_READ_CHUNK_TIMEOUT)
+                if chunk is None:
+                    return
+                if not chunk:
+                    await asyncio.sleep(0)
+                    continue
+                await ws.send_bytes(chunk)
+        except (WebSocketDisconnect, RuntimeError):
+            return
+        finally:
+            try:
+                await ws.close()
+            except RuntimeError:
+                pass
+
+    reader_task = asyncio.create_task(pump_pty_to_ws())
+    try:
+        while True:
+            message = await ws.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
+            raw = message.get("bytes")
+            if raw is None:
+                text = message.get("text")
+                raw = text.encode("utf-8") if isinstance(text, str) else b""
+            if not raw:
+                continue
+            match = _RESIZE_RE.match(raw)
+            if match and match.end() == len(raw):
+                bridge.resize(cols=int(match.group(1)), rows=int(match.group(2)))
+                continue
+            bridge.write(raw)
+    except (RuntimeError, WebSocketDisconnect):
         pass
     finally:
         reader_task.cancel()

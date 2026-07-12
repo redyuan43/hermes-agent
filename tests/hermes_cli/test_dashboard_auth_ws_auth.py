@@ -533,6 +533,12 @@ class TestWsHostOriginGuardOrigins:
         ws = self._ws(origin="app://.", host="fly-app.fly.dev")
         assert web_server._ws_host_origin_is_allowed(ws) is True
 
+    def test_gated_capacitor_localhost_origin_allowed(self, gated_app):
+        # Capacitor's packaged WebView uses https://localhost as its app
+        # origin. The single-use WS ticket is still the authentication boundary.
+        ws = self._ws(origin="https://localhost", host="fly-app.fly.dev")
+        assert web_server._ws_host_origin_is_allowed(ws) is True
+
     def test_gated_cross_site_http_origin_still_host_checked(self, gated_app):
         # An http(s) origin is still subjected to the same-host check even on a
         # gated bind: a cross-site http origin whose netloc doesn't match the
