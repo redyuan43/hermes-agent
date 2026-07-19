@@ -8,6 +8,7 @@ from agent.secret_scope import (
     set_secret_scope,
 )
 from gateway.config import PlatformConfig
+from hermes_constants import reset_hermes_home_override, set_hermes_home_override
 from plugins.platforms.matrix.adapter import MatrixAdapter, _apply_yaml_config
 
 
@@ -194,3 +195,28 @@ def test_profile_policy_authorizes_invite_and_reaction_actors(monkeypatch):
         "dm",
         "!new-dm:yuanspaces.com",
     )
+
+
+def test_crypto_store_path_is_captured_per_profile(tmp_path):
+    life_home = tmp_path / "matrix-life"
+    work_home = tmp_path / "matrix-work"
+
+    life_token = set_hermes_home_override(str(life_home))
+    try:
+        life = MatrixAdapter(PlatformConfig(enabled=True))
+    finally:
+        reset_hermes_home_override(life_token)
+
+    work_token = set_hermes_home_override(str(work_home))
+    try:
+        work = MatrixAdapter(PlatformConfig(enabled=True))
+    finally:
+        reset_hermes_home_override(work_token)
+
+    assert life._crypto_db_path == (
+        life_home / "platforms" / "matrix" / "store" / "crypto.db"
+    )
+    assert work._crypto_db_path == (
+        work_home / "platforms" / "matrix" / "store" / "crypto.db"
+    )
+    assert life._crypto_db_path != work._crypto_db_path

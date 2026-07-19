@@ -351,8 +351,8 @@ class _MatrixModelPickerPrompt:
 # but clients render poorly above this).
 MAX_MESSAGE_LENGTH = 4000
 
-# Store directory for E2EE keys and sync state.
-# Uses get_hermes_home() so each profile gets its own Matrix store.
+# Legacy/default store directory. MatrixAdapter resolves its own store again
+# during profile-scoped construction so multiplexed accounts never share it.
 from hermes_constants import get_hermes_dir as _get_hermes_dir
 
 _STORE_DIR = _get_hermes_dir("platforms/matrix/store", "matrix/store")
@@ -820,6 +820,14 @@ class MatrixAdapter(BasePlatformAdapter):
             "MATRIX_DEVICE_ID", ""
         )
         self._device_id_unverified: bool = False
+        self._store_dir = _get_hermes_dir(
+            "platforms/matrix/store",
+            "matrix/store",
+        )
+        self._crypto_db_path = self._store_dir / "crypto.db"
+        self._recovery_key_configured = bool(
+            _matrix_secret("MATRIX_RECOVERY_KEY", "").strip()
+        )
 
         self._client: Any = None  # mautrix.client.Client
         self._crypto_db: Any = None  # mautrix.util.async_db.Database
@@ -1415,7 +1423,7 @@ class MatrixAdapter(BasePlatformAdapter):
             if self._encryption:
                 try:
                     # Remove legacy pickle file from pre-SQLite era.
-                    legacy_pickle = _STORE_DIR / "crypto_store.pickle"
+                    legacy_pickle = self._store_dir / "crypto_store.pickle"
                     if legacy_pickle.exists():
                         logger.info(
                             "Matrix: removing legacy crypto_store.pickle (migrated to SQLite)"
@@ -1423,7 +1431,7 @@ class MatrixAdapter(BasePlatformAdapter):
                         legacy_pickle.unlink()
 
                     crypto_db = Database.create(
-                        f"sqlite:///{_CRYPTO_DB_PATH}",
+                        f"sqlite:///{self._crypto_db_path}",
                         upgrade_table=PgCryptoStore.upgrade_table,
                     )
                     await crypto_db.start()
@@ -1767,8 +1775,8 @@ class MatrixAdapter(BasePlatformAdapter):
                 "mode": self._e2ee_mode,
                 "enabled": bool(self._encryption),
                 "deps_available": _check_e2ee_deps(),
-                "crypto_store_path": str(_CRYPTO_DB_PATH),
-                "recovery_key_configured": bool(os.getenv("MATRIX_RECOVERY_KEY", "").strip()),
+                "crypto_store_path": str(self._crypto_db_path),
+                "recovery_key_configured": self._recovery_key_configured,
             },
             "policy": {
                 "allowed_user_count": len(self._allowed_user_ids),
