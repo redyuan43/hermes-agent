@@ -1213,7 +1213,7 @@ class MatrixAdapter(BasePlatformAdapter):
                     "Matrix: server has different identity keys for device %s — "
                     "local crypto state is stale. Delete %s and restart.",
                     client.device_id,
-                    _CRYPTO_DB_PATH,
+                    self._crypto_db_path,
                 )
                 return False
 
@@ -1270,7 +1270,7 @@ class MatrixAdapter(BasePlatformAdapter):
             return False
 
         # Ensure store dir exists for E2EE key persistence.
-        _STORE_DIR.mkdir(parents=True, exist_ok=True)
+        self._store_dir.mkdir(parents=True, exist_ok=True)
 
         # Create the HTTP API layer.
         client_session = _create_matrix_session(self._proxy_url)
@@ -1402,7 +1402,7 @@ class MatrixAdapter(BasePlatformAdapter):
                     from mautrix.crypto.store.asyncpg import PgCryptoStore
                     from mautrix.util.async_db import Database
 
-                    _STORE_DIR.mkdir(parents=True, exist_ok=True)
+                    self._store_dir.mkdir(parents=True, exist_ok=True)
                 except Exception as exc:
                     if self._e2ee_mode == "optional":
                         logger.warning(
@@ -1533,7 +1533,7 @@ class MatrixAdapter(BasePlatformAdapter):
                     client.crypto = olm
                     logger.info(
                         "Matrix: E2EE enabled (store: %s%s)",
-                        str(_CRYPTO_DB_PATH),
+                        str(self._crypto_db_path),
                         f", device_id={client.device_id}" if client.device_id else "",
                     )
                 except Exception as exc:
