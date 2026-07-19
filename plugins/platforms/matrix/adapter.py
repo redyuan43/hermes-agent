@@ -134,6 +134,7 @@ from gateway.platforms.base import (
     _ssrf_redirect_guard,
 )
 from gateway.platforms.helpers import ThreadParticipationTracker
+from agent.secret_scope import get_secret
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,12 @@ _MATRIX_BANG_COMMAND_RE = re.compile(
     r"^!([A-Za-z][A-Za-z0-9_-]*)(?=$|\s)(.*)$",
     re.DOTALL,
 )
+
+
+def _matrix_secret(name: str, default: str = "") -> str:
+    """Read a Matrix setting from the active profile's secret scope."""
+    value = get_secret(name, default)
+    return default if value is None else str(value)
 
 
 def _resolve_matrix_bang_command(name: str) -> str | None:
@@ -525,12 +532,12 @@ def _normalize_e2ee_mode(value: Any) -> str:
 def _resolve_e2ee_mode(extra: Optional[Dict[str, Any]] = None) -> str:
     """Resolve E2EE mode with MATRIX_ENCRYPTION backwards compatibility."""
     extra = extra or {}
-    explicit = extra.get("e2ee_mode") or os.getenv("MATRIX_E2EE_MODE", "")
+    explicit = extra.get("e2ee_mode") or _matrix_secret("MATRIX_E2EE_MODE", "")
     if explicit:
         return _normalize_e2ee_mode(explicit)
     legacy_enabled = extra.get(
         "encryption",
-        os.getenv("MATRIX_ENCRYPTION", "").lower() in ("true", "1", "yes"),
+        _matrix_secret("MATRIX_ENCRYPTION", "").lower() in ("true", "1", "yes"),
     )
     return "required" if legacy_enabled else "off"
 
@@ -549,7 +556,7 @@ def _write_matrix_recovery_key_output_file(recovery_key: str) -> Optional[Path]:
     The file is created with mode 0600 and never overwritten. Returns the path
     when written, otherwise None.
     """
-    output_file = os.getenv("MATRIX_RECOVERY_KEY_OUTPUT_FILE", "").strip()
+    output_file = _matrix_secret("MATRIX_RECOVERY_KEY_OUTPUT_FILE", "").strip()
     if not output_file:
         return None
     path = Path(output_file).expanduser()
@@ -571,7 +578,7 @@ def _write_matrix_recovery_key_output_file(recovery_key: str) -> Optional[Path]:
 
 def _get_matrix_recovery_key_output_target() -> tuple[Optional[Path], str]:
     """Return a usable one-time recovery-key output path, or a redacted reason."""
-    output_file = os.getenv("MATRIX_RECOVERY_KEY_OUTPUT_FILE", "").strip()
+    output_file = _matrix_secret("MATRIX_RECOVERY_KEY_OUTPUT_FILE", "").strip()
     if not output_file:
         return None, "not_configured"
     path = Path(output_file).expanduser()
@@ -676,9 +683,9 @@ def check_matrix_requirements() -> bool:
     forever and broke E2EE connect with ``No module named 'asyncpg'``
     (#31116).  Rebinds module-level type globals on success.
     """
-    token = os.getenv("MATRIX_ACCESS_TOKEN", "")
-    password = os.getenv("MATRIX_PASSWORD", "")
-    homeserver = os.getenv("MATRIX_HOMESERVER", "")
+    token = _matrix_secret("MATRIX_ACCESS_TOKEN", "")
+    password = _matrix_secret("MATRIX_PASSWORD", "")
+    homeserver = _matrix_secret("MATRIX_HOMESERVER", "")
 
     if not token and not password:
         logger.debug("Matrix: neither MATRIX_ACCESS_TOKEN nor MATRIX_PASSWORD set")
@@ -795,18 +802,21 @@ class MatrixAdapter(BasePlatformAdapter):
         super().__init__(config, Platform.MATRIX)
 
         self._homeserver: str = (
-            config.extra.get("homeserver", "") or os.getenv("MATRIX_HOMESERVER", "")
+            config.extra.get("homeserver", "")
+            or _matrix_secret("MATRIX_HOMESERVER", "")
         ).rstrip("/")
-        self._access_token: str = config.token or os.getenv("MATRIX_ACCESS_TOKEN", "")
-        self._user_id: str = config.extra.get("user_id", "") or os.getenv(
+        self._access_token: str = config.token or _matrix_secret(
+            "MATRIX_ACCESS_TOKEN", ""
+        )
+        self._user_id: str = config.extra.get("user_id", "") or _matrix_secret(
             "MATRIX_USER_ID", ""
         )
-        self._password: str = config.extra.get("password", "") or os.getenv(
+        self._password: str = config.extra.get("password", "") or _matrix_secret(
             "MATRIX_PASSWORD", ""
         )
         self._e2ee_mode: str = _resolve_e2ee_mode(config.extra)
         self._encryption: bool = self._e2ee_mode != "off"
-        self._device_id: str = config.extra.get("device_id", "") or os.getenv(
+        self._device_id: str = config.extra.get("device_id", "") or _matrix_secret(
             "MATRIX_DEVICE_ID", ""
         )
         self._device_id_unverified: bool = False
@@ -957,18 +967,35 @@ class MatrixAdapter(BasePlatformAdapter):
         except ValueError:
             self._approval_timeout_seconds = 300
         self._model_picker_prompts_by_event: Dict[str, _MatrixModelPickerPrompt] = {}
-        allowed_users_raw = os.getenv("MATRIX_ALLOWED_USERS", "")
+        allowed_users_raw = config.extra.get("allowed_users")
+        if allowed_users_raw is None:
+            allowed_users_raw = _matrix_secret("MATRIX_ALLOWED_USERS", "")
+        if isinstance(allowed_users_raw, list):
+            allowed_users_raw = ",".join(str(value) for value in allowed_users_raw)
         self._allowed_user_ids: Set[str] = {
-            u.strip() for u in allowed_users_raw.split(",") if u.strip()
+            u.strip() for u in str(allowed_users_raw).split(",") if u.strip()
         }
-        allowed_servers_raw = os.getenv("MATRIX_ALLOWED_SERVERS", "")
+        allowed_servers_raw = config.extra.get("allowed_servers")
+        if allowed_servers_raw is None:
+            allowed_servers_raw = _matrix_secret("MATRIX_ALLOWED_SERVERS", "")
+        if isinstance(allowed_servers_raw, list):
+            allowed_servers_raw = ",".join(
+                str(value) for value in allowed_servers_raw
+            )
         self._allowed_servers: Set[str] = {
             server.strip().lower().lstrip(":")
-            for server in allowed_servers_raw.split(",")
+            for server in str(allowed_servers_raw).split(",")
             if server.strip().lstrip(":")
         }
-        self._authorize_allowed_room_members: bool = os.getenv(
-            "MATRIX_AUTHORIZE_ALLOWED_ROOM_MEMBERS", "false"
+        authorize_room_members = config.extra.get(
+            "authorize_allowed_room_members"
+        )
+        if authorize_room_members is None:
+            authorize_room_members = _matrix_secret(
+                "MATRIX_AUTHORIZE_ALLOWED_ROOM_MEMBERS", "false"
+            )
+        self._authorize_allowed_room_members = str(
+            authorize_room_members
         ).lower() in ("true", "1", "yes")
         self._allowed_room_ids: Set[str] = set(self._allowed_rooms)
         ignore_patterns_raw = os.getenv("MATRIX_IGNORE_USER_PATTERNS", "")
@@ -1425,7 +1452,7 @@ class MatrixAdapter(BasePlatformAdapter):
                             return False
                         logger.warning("Matrix: share_keys() warning during startup: %s", exc)
 
-                    recovery_key = os.getenv("MATRIX_RECOVERY_KEY", "").strip()
+                    recovery_key = _matrix_secret("MATRIX_RECOVERY_KEY", "").strip()
                     if recovery_key:
                         try:
                             await olm.verify_with_recovery_key(recovery_key)
@@ -4581,6 +4608,25 @@ def _apply_yaml_config(yaml_cfg: dict, matrix_cfg: dict) -> dict | None:
     matrix_cfg block from gateway/config.py::load_gateway_config(). Env vars
     take precedence over YAML. Returns None — everything flows through env.
     """
+    extras: dict[str, Any] = {}
+    for key in (
+        "require_mention",
+        "thread_require_mention",
+        "free_response_rooms",
+        "allowed_users",
+        "allowed_rooms",
+        "allowed_servers",
+        "authorize_allowed_room_members",
+        "ignore_user_patterns",
+        "process_notices",
+        "session_scope",
+        "auto_thread",
+        "dm_mention_threads",
+        "e2ee_mode",
+    ):
+        if key in matrix_cfg:
+            extras[key] = matrix_cfg[key]
+
     if "require_mention" in matrix_cfg and not os.getenv("MATRIX_REQUIRE_MENTION"):
         os.environ["MATRIX_REQUIRE_MENTION"] = str(matrix_cfg["require_mention"]).lower()
     au = matrix_cfg.get("allowed_users")
@@ -4623,7 +4669,7 @@ def _apply_yaml_config(yaml_cfg: dict, matrix_cfg: dict) -> dict | None:
         os.environ["MATRIX_AUTO_THREAD"] = str(matrix_cfg["auto_thread"]).lower()
     if "dm_mention_threads" in matrix_cfg and not os.getenv("MATRIX_DM_MENTION_THREADS"):
         os.environ["MATRIX_DM_MENTION_THREADS"] = str(matrix_cfg["dm_mention_threads"]).lower()
-    return None
+    return extras or None
 
 
 def _is_connected(config) -> bool:

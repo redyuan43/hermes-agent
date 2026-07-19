@@ -2,6 +2,11 @@
 
 import os
 
+from agent.secret_scope import (
+    reset_secret_scope,
+    set_multiplex_active,
+    set_secret_scope,
+)
 from gateway.config import PlatformConfig
 from plugins.platforms.matrix.adapter import MatrixAdapter, _apply_yaml_config
 
@@ -102,3 +107,60 @@ def test_yaml_settings_bridge_to_profile_runtime_env(monkeypatch):
 
     assert os.getenv("MATRIX_ALLOWED_SERVERS") == "yuanspaces.com"
     assert os.getenv("MATRIX_AUTHORIZE_ALLOWED_ROOM_MEMBERS") == "true"
+
+
+def test_adapter_credentials_come_from_profile_secret_scope(monkeypatch):
+    for key in (
+        "MATRIX_HOMESERVER",
+        "MATRIX_ACCESS_TOKEN",
+        "MATRIX_USER_ID",
+        "MATRIX_DEVICE_ID",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    set_multiplex_active(True)
+    token = set_secret_scope(
+        {
+            "MATRIX_HOMESERVER": "https://matrix.yuanspaces.com",
+            "MATRIX_ACCESS_TOKEN": "profile-token",
+            "MATRIX_USER_ID": "@life:yuanspaces.com",
+            "MATRIX_DEVICE_ID": "HERMES_LIFE_NANO2",
+        }
+    )
+    try:
+        adapter = MatrixAdapter(PlatformConfig(enabled=True))
+    finally:
+        reset_secret_scope(token)
+        set_multiplex_active(False)
+
+    assert adapter._homeserver == "https://matrix.yuanspaces.com"
+    assert adapter._access_token == "profile-token"
+    assert adapter._user_id == "@life:yuanspaces.com"
+    assert adapter._device_id == "HERMES_LIFE_NANO2"
+
+
+def test_profile_config_authorization_overrides_process_environment(monkeypatch):
+    monkeypatch.setenv("MATRIX_ALLOWED_SERVERS", "wrong.example")
+    monkeypatch.setenv("MATRIX_AUTHORIZE_ALLOWED_ROOM_MEMBERS", "false")
+
+    adapter = MatrixAdapter(
+        PlatformConfig(
+            enabled=True,
+            extra={
+                "allowed_servers": ["yuanspaces.com"],
+                "allowed_rooms": ["!agents:yuanspaces.com"],
+                "authorize_allowed_room_members": True,
+            },
+        )
+    )
+
+    assert adapter.authorize_inbound_sender(
+        "@ivan:yuanspaces.com",
+        "dm",
+        "!dm:yuanspaces.com",
+    ) is True
+    assert adapter.authorize_inbound_sender(
+        "@guest:remote.example",
+        "group",
+        "!agents:yuanspaces.com",
+    ) is True
