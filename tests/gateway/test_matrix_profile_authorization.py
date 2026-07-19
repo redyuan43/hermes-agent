@@ -164,3 +164,33 @@ def test_profile_config_authorization_overrides_process_environment(monkeypatch)
         "group",
         "!agents:yuanspaces.com",
     ) is True
+
+
+def test_profile_policy_authorizes_invite_and_reaction_actors(monkeypatch):
+    monkeypatch.delenv("GATEWAY_ALLOW_ALL_USERS", raising=False)
+    adapter = MatrixAdapter(
+        PlatformConfig(
+            enabled=True,
+            extra={
+                "allowed_servers": ["yuanspaces.com"],
+                "allowed_rooms": ["!agents:yuanspaces.com"],
+                "authorize_allowed_room_members": True,
+            },
+        )
+    )
+
+    assert adapter._is_matrix_actor_authorized(
+        "@life:yuanspaces.com",
+        "group",
+        "!agents:yuanspaces.com",
+    )
+    assert adapter._is_matrix_actor_authorized(
+        "@ivan:yuanspaces.com",
+        "dm",
+        "!new-dm:yuanspaces.com",
+    )
+    assert not adapter._is_matrix_actor_authorized(
+        "@mallory:remote.example",
+        "dm",
+        "!new-dm:yuanspaces.com",
+    )

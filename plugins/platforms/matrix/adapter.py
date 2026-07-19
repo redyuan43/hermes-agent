@@ -1047,6 +1047,24 @@ class MatrixAdapter(BasePlatformAdapter):
                     return True
         return False
 
+    def _is_matrix_actor_authorized(
+        self,
+        user_id: str,
+        chat_type: str,
+        room_id: str,
+    ) -> bool:
+        """Authorize Matrix invite/reaction actors with the profile policy."""
+        if os.getenv("GATEWAY_ALLOW_ALL_USERS", "").lower() in {
+            "true",
+            "1",
+            "yes",
+        }:
+            return True
+        decision = self.authorize_inbound_sender(user_id, chat_type, room_id)
+        if decision is not None:
+            return decision
+        return bool(self._allowed_user_ids and user_id in self._allowed_user_ids)
+
     def _is_duplicate_event(self, event_id) -> bool:
         """Return True if this event was already processed. Tracks the ID otherwise."""
         if not event_id:
@@ -3070,13 +3088,11 @@ class MatrixAdapter(BasePlatformAdapter):
         # federated Matrix user could invite the bot into arbitrary rooms,
         # exposing its presence and metadata. Mirrors the allow-list gate
         # used on the message/reaction paths.
-        allow_all = os.getenv("GATEWAY_ALLOW_ALL_USERS", "").lower() in {
-            "true",
-            "1",
-            "yes",
-        }
-        if not allow_all and not (
-            self._allowed_user_ids and inviter in self._allowed_user_ids
+        invite_chat_type = "dm" if is_direct else "group"
+        if not self._is_matrix_actor_authorized(
+            inviter,
+            invite_chat_type,
+            room_id,
         ):
             logger.warning(
                 "Matrix: rejecting invite to %s from unauthorized user %s",
@@ -3407,14 +3423,7 @@ class MatrixAdapter(BasePlatformAdapter):
         prompt: Any,
         prompt_label: str,
     ) -> bool:
-        allow_all = os.getenv("GATEWAY_ALLOW_ALL_USERS", "").lower() in {
-            "true",
-            "1",
-            "yes",
-        }
-        if not allow_all and not (
-            self._allowed_user_ids and sender in self._allowed_user_ids
-        ):
+        if not self._is_matrix_actor_authorized(sender, "group", room_id):
             logger.info(
                 "Matrix: ignoring %s reaction from unauthorized user %s on %s",
                 prompt_label, sender, target_event_id,
