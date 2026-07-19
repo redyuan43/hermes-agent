@@ -60,7 +60,11 @@ class TestWebhookProfileResolution:
         adapter, Req, _REJ, served = self._adapter(multiplex=True)
         monkeypatch.setattr(
             "hermes_cli.profiles.profiles_to_serve",
-            lambda multiplex: [(n, None) for n in served],
+            lambda multiplex, profile_allowlist=None: [
+                (n, None)
+                for n in served
+                if not profile_allowlist or n in {"default", *profile_allowlist}
+            ],
         )
         assert adapter._resolve_request_profile(Req("coder")) == "coder"
 

@@ -130,6 +130,41 @@ class TestMultiplexConfigFlag:
         cfg = GatewayConfig.from_dict(GatewayConfig(multiplex_profiles=True).to_dict())
         assert cfg.multiplex_profiles is True
 
+    def test_profile_allowlist_defaults_empty(self):
+        assert GatewayConfig().multiplex_profile_allowlist == []
+
+    def test_profile_allowlist_roundtrip(self):
+        cfg = GatewayConfig.from_dict(
+            {
+                "gateway": {
+                    "multiplex_profiles": True,
+                    "multiplex_profile_allowlist": [
+                        "matrix-life",
+                        "matrix-work",
+                    ],
+                }
+            }
+        )
+
+        assert cfg.multiplex_profile_allowlist == [
+            "matrix-life",
+            "matrix-work",
+        ]
+        assert GatewayConfig.from_dict(cfg.to_dict()).multiplex_profile_allowlist == [
+            "matrix-life",
+            "matrix-work",
+        ]
+
+    def test_profile_allowlist_accepts_comma_separated_string(self):
+        cfg = GatewayConfig.from_dict(
+            {"multiplex_profile_allowlist": "matrix-life, matrix-work"}
+        )
+
+        assert cfg.multiplex_profile_allowlist == [
+            "matrix-life",
+            "matrix-work",
+        ]
+
     def test_gateway_config_loader_honors_profile_runtime_scope(self, tmp_path, monkeypatch):
         """Multiplexed turns must resolve display settings from the routed profile."""
         import gateway.run as gateway_run

@@ -707,6 +707,10 @@ class GatewayConfig:
     # phases) per-profile adapters/credentials are resolved. When False, the
     # gateway behaves exactly as before — single HERMES_HOME, no profile stamping.
     multiplex_profiles: bool = False
+    # Optional named-profile filter for multiplex mode. The default profile is
+    # always served; an empty list preserves the historical "all profiles"
+    # behavior.
+    multiplex_profile_allowlist: List[str] = field(default_factory=list)
 
     # Unauthorized DM policy
     unauthorized_dm_behavior: str = "pair"  # "pair" or "ignore"
@@ -824,6 +828,7 @@ class GatewayConfig:
             "thread_sessions_per_user": self.thread_sessions_per_user,
             "max_concurrent_sessions": self.max_concurrent_sessions,
             "multiplex_profiles": self.multiplex_profiles,
+            "multiplex_profile_allowlist": self.multiplex_profile_allowlist,
             "unauthorized_dm_behavior": self.unauthorized_dm_behavior,
             "streaming": self.streaming.to_dict(),
             "session_store_max_age_days": self.session_store_max_age_days,
@@ -881,11 +886,30 @@ class GatewayConfig:
         group_sessions_per_user = data.get("group_sessions_per_user")
         thread_sessions_per_user = data.get("thread_sessions_per_user")
         multiplex_profiles = data.get("multiplex_profiles")
+        multiplex_profile_allowlist = data.get("multiplex_profile_allowlist")
         nested_gateway = data.get("gateway") if isinstance(data.get("gateway"), dict) else {}
         if multiplex_profiles is None and isinstance(nested_gateway, dict):
             # Also honor gateway.multiplex_profiles written by
             # ``hermes config set gateway.multiplex_profiles true``.
             multiplex_profiles = nested_gateway.get("multiplex_profiles")
+        if multiplex_profile_allowlist is None and isinstance(nested_gateway, dict):
+            multiplex_profile_allowlist = nested_gateway.get(
+                "multiplex_profile_allowlist"
+            )
+        if isinstance(multiplex_profile_allowlist, str):
+            multiplex_profile_allowlist = [
+                item.strip()
+                for item in multiplex_profile_allowlist.split(",")
+                if item.strip()
+            ]
+        elif isinstance(multiplex_profile_allowlist, (list, tuple, set)):
+            multiplex_profile_allowlist = [
+                str(item).strip()
+                for item in multiplex_profile_allowlist
+                if str(item).strip()
+            ]
+        else:
+            multiplex_profile_allowlist = []
         # Operator override: GATEWAY_MULTIPLEX_PROFILES wins over config.yaml when
         # set to a recognized value. Hosted deployments (Nous Portal / Fly) stamp
         # it on the container so the single multiplexed gateway — which the
@@ -937,6 +961,7 @@ class GatewayConfig:
             group_sessions_per_user=_coerce_bool(group_sessions_per_user, True),
             thread_sessions_per_user=_coerce_bool(thread_sessions_per_user, False),
             multiplex_profiles=_coerce_bool(multiplex_profiles, False),
+            multiplex_profile_allowlist=multiplex_profile_allowlist,
             max_concurrent_sessions=max_concurrent_sessions,
             unauthorized_dm_behavior=unauthorized_dm_behavior,
             streaming=StreamingConfig.from_dict(data.get("streaming", {})),
@@ -1052,12 +1077,20 @@ def load_gateway_config() -> GatewayConfig:
             # ``hermes config set gateway.multiplex_profiles true``).
             if "multiplex_profiles" in yaml_cfg:
                 gw_data["multiplex_profiles"] = yaml_cfg["multiplex_profiles"]
+            if "multiplex_profile_allowlist" in yaml_cfg:
+                gw_data["multiplex_profile_allowlist"] = yaml_cfg[
+                    "multiplex_profile_allowlist"
+                ]
 
             gateway_section = yaml_cfg.get("gateway")
             if isinstance(gateway_section, dict):
                 if "multiplex_profiles" in gateway_section and "multiplex_profiles" not in gw_data:
                     # gateway.multiplex_profiles written by `hermes config set gateway.multiplex_profiles true`
                     gw_data["multiplex_profiles"] = gateway_section["multiplex_profiles"]
+                if "multiplex_profile_allowlist" in gateway_section:
+                    gw_data["multiplex_profile_allowlist"] = gateway_section[
+                        "multiplex_profile_allowlist"
+                    ]
                 if "max_concurrent_sessions" in gateway_section:
                     gw_data["max_concurrent_sessions"] = gateway_section["max_concurrent_sessions"]
 

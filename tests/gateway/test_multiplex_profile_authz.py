@@ -157,3 +157,67 @@ def test_secondary_open_policy_fails_startup_guard(monkeypatch):
     assert violation is not None
     assert "wecom" in violation
     assert "open policy" in violation
+
+
+def test_adapter_auth_callback_stamps_secondary_profile():
+    """Adapter context checks must resolve the same profile as inbound turns."""
+    from gateway.run import GatewayRunner
+
+    runner = object.__new__(GatewayRunner)
+    seen = {}
+
+    def _authorize(source):
+        seen["source"] = source
+        return True
+
+    runner._is_user_authorized = _authorize
+
+    check = runner._make_adapter_auth_check(
+        Platform.MATRIX,
+        profile="matrix-life",
+    )
+
+    assert check("@ivan:yuanspaces.com", "group", "!agents:yuanspaces.com")
+    assert seen["source"].profile == "matrix-life"
+
+
+def test_profile_scoped_adapter_sender_policy_is_authoritative(monkeypatch):
+    """A secondary adapter decision must not leak through process-global env."""
+    from gateway.run import GatewayRunner
+
+    _clear_auth_env(monkeypatch)
+    monkeypatch.delenv("MATRIX_ALLOWED_USERS", raising=False)
+    monkeypatch.delenv("MATRIX_ALLOW_ALL_USERS", raising=False)
+
+    runner = object.__new__(GatewayRunner)
+    runner.config = GatewayConfig(multiplex_profiles=True)
+    runner.adapters = {}
+    runner._profile_adapters = {
+        "matrix-life": {
+            Platform.MATRIX: SimpleNamespace(
+                authorize_inbound_sender=lambda user_id, chat_type, chat_id: (
+                    user_id.endswith(":yuanspaces.com")
+                ),
+            ),
+        },
+    }
+    runner.pairing_store = MagicMock()
+    runner.pairing_store.is_approved.return_value = True
+
+    local = SessionSource(
+        platform=Platform.MATRIX,
+        user_id="@ivan:yuanspaces.com",
+        chat_id="!dm:yuanspaces.com",
+        chat_type="dm",
+        profile="matrix-life",
+    )
+    remote = SessionSource(
+        platform=Platform.MATRIX,
+        user_id="@mallory:remote.example",
+        chat_id="!dm:yuanspaces.com",
+        chat_type="dm",
+        profile="matrix-life",
+    )
+
+    assert runner._is_user_authorized(local) is True
+    assert runner._is_user_authorized(remote) is False

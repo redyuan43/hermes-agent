@@ -1896,3 +1896,29 @@ class TestProfilesToServe:
     def test_on_no_named_profiles_returns_just_default(self, profile_env):
         serve = profiles_to_serve(multiplex=True)
         assert [n for n, _ in serve] == ["default"]
+
+    def test_on_allowlist_returns_default_plus_selected_profiles(self, profile_env):
+        create_profile("coder", no_alias=True)
+        create_profile("writer", no_alias=True)
+
+        serve = dict(
+            profiles_to_serve(
+                multiplex=True,
+                profile_allowlist=["writer", "missing"],
+            )
+        )
+
+        assert set(serve) == {"default", "writer"}
+
+    def test_on_empty_allowlist_preserves_all_profiles(self, profile_env):
+        create_profile("coder", no_alias=True)
+        create_profile("writer", no_alias=True)
+
+        serve = dict(
+            profiles_to_serve(
+                multiplex=True,
+                profile_allowlist=[],
+            )
+        )
+
+        assert set(serve) == {"default", "coder", "writer"}

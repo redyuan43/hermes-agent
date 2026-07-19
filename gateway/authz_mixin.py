@@ -261,6 +261,33 @@ class GatewayAuthorizationMixin:
             return per_profile[profile]
         return getattr(self, "pairing_store", None)
 
+    def _adapter_sender_authorization(
+        self,
+        source: SessionSource,
+    ) -> Optional[bool]:
+        """Return a profile-scoped adapter authorization decision, if any.
+
+        Most adapters continue through the gateway's legacy environment and
+        pairing checks. Adapters with richer identity rules can expose
+        ``authorize_inbound_sender`` and return ``True`` or ``False`` as an
+        authoritative decision. ``None`` means no adapter policy is active.
+        """
+        adapter = self._adapter_for_source(source)
+        authorize = getattr(adapter, "authorize_inbound_sender", None)
+        if not callable(authorize):
+            return None
+        try:
+            decision = authorize(
+                source.user_id,
+                source.chat_type,
+                source.chat_id,
+            )
+        except Exception:
+            return False
+        if decision is None:
+            return None
+        return bool(decision)
+
     def _is_user_authorized(self, source: SessionSource) -> bool:
         """
         Check if a user is authorized to use the bot.
@@ -313,6 +340,10 @@ class GatewayAuthorizationMixin:
             profile=source.profile,
         ):
             return True
+
+        adapter_decision = self._adapter_sender_authorization(source)
+        if adapter_decision is not None:
+            return adapter_decision
 
         user_id = source.user_id
 

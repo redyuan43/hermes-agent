@@ -30,7 +30,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 from agent.skill_utils import is_excluded_skill_path
 
@@ -946,7 +946,10 @@ def list_profiles() -> List[ProfileInfo]:
     return profiles
 
 
-def profiles_to_serve(multiplex: bool) -> List[Tuple[str, Path]]:
+def profiles_to_serve(
+    multiplex: bool,
+    profile_allowlist: Optional[Iterable[str]] = None,
+) -> List[Tuple[str, Path]]:
     """Return the ``(profile_name, hermes_home)`` pairs a gateway should serve.
 
     This is the single chokepoint for "which profiles does the inbound gateway
@@ -957,7 +960,9 @@ def profiles_to_serve(multiplex: bool) -> List[Tuple[str, Path]]:
       always had. The name is ``"default"`` for the default profile or the
       active named profile's id.
     - ``multiplex=True``: returns the default profile plus every valid named
-      profile under ``profiles/``, each paired with its own HERMES_HOME.
+      profile under ``profiles/``, each paired with its own HERMES_HOME. When
+      ``profile_allowlist`` is non-empty, only named profiles in that set are
+      included; the default profile remains first and cannot be excluded.
 
     Intentionally lightweight (a directory scan + name validation only): no
     per-profile config reads, gateway-running probes, or skill counts like
@@ -971,6 +976,11 @@ def profiles_to_serve(multiplex: bool) -> List[Tuple[str, Path]]:
         return [(active, get_profile_dir(active))]
 
     serve: List[Tuple[str, Path]] = [("default", _get_default_hermes_home())]
+    allowed_names = {
+        str(name).strip()
+        for name in (profile_allowlist or ())
+        if str(name).strip()
+    }
 
     profiles_root = _get_profiles_root()
     if profiles_root.is_dir():
@@ -981,6 +991,8 @@ def profiles_to_serve(multiplex: bool) -> List[Tuple[str, Path]]:
             if name == "default":
                 continue  # default is the built-in entry already added above
             if not _PROFILE_ID_RE.match(name):
+                continue
+            if allowed_names and name not in allowed_names:
                 continue
             serve.append((name, entry))
 

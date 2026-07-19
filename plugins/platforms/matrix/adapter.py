@@ -15,6 +15,9 @@ Environment variables:
     MATRIX_DEVICE_ID            Stable device ID for E2EE persistence across restarts
     MATRIX_PROXY                HTTP(S) or SOCKS proxy URL for Matrix traffic
     MATRIX_ALLOWED_USERS    Comma-separated Matrix user IDs (@user:server)
+    MATRIX_ALLOWED_SERVERS  Comma-separated homeserver names allowed in DMs
+    MATRIX_AUTHORIZE_ALLOWED_ROOM_MEMBERS
+                            Authorize senders in MATRIX_ALLOWED_ROOMS
     MATRIX_ALLOWED_ROOMS    Comma-separated Matrix room IDs allowed to trigger turns
     MATRIX_HOME_ROOM        Room ID for cron/notification delivery
     MATRIX_REACTIONS        Set "false" to disable processing lifecycle reactions
@@ -958,6 +961,15 @@ class MatrixAdapter(BasePlatformAdapter):
         self._allowed_user_ids: Set[str] = {
             u.strip() for u in allowed_users_raw.split(",") if u.strip()
         }
+        allowed_servers_raw = os.getenv("MATRIX_ALLOWED_SERVERS", "")
+        self._allowed_servers: Set[str] = {
+            server.strip().lower().lstrip(":")
+            for server in allowed_servers_raw.split(",")
+            if server.strip().lstrip(":")
+        }
+        self._authorize_allowed_room_members: bool = os.getenv(
+            "MATRIX_AUTHORIZE_ALLOWED_ROOM_MEMBERS", "false"
+        ).lower() in ("true", "1", "yes")
         self._allowed_room_ids: Set[str] = set(self._allowed_rooms)
         ignore_patterns_raw = os.getenv("MATRIX_IGNORE_USER_PATTERNS", "")
         self._ignored_user_patterns: list[re.Pattern[str]] = []
@@ -970,6 +982,43 @@ class MatrixAdapter(BasePlatformAdapter):
                     pattern,
                     exc,
                 )
+
+    def authorize_inbound_sender(
+        self,
+        user_id: Optional[str],
+        chat_type: Optional[str],
+        chat_id: Optional[str],
+    ) -> Optional[bool]:
+        """Apply Matrix identity rules captured for this adapter profile.
+
+        The policy becomes authoritative only when one of the new profile-safe
+        settings is enabled. This preserves legacy pairing/env behavior for
+        existing Matrix installations while allowing multiplexed adapters to
+        authorize without consulting process-global environment state.
+        """
+        if not self._allowed_servers and not self._authorize_allowed_room_members:
+            return None
+        if not user_id:
+            return False
+        if user_id in self._allowed_user_ids:
+            return True
+        if (
+            chat_type in {"group", "forum", "channel"}
+            and self._authorize_allowed_room_members
+            and bool(chat_id)
+            and chat_id in self._allowed_room_ids
+        ):
+            return True
+        if chat_type not in {"group", "forum", "channel"}:
+            if user_id.startswith("@"):
+                localpart, separator, server = user_id[1:].partition(":")
+                if (
+                    localpart
+                    and separator
+                    and server.lower() in self._allowed_servers
+                ):
+                    return True
+        return False
 
     def _is_duplicate_event(self, event_id) -> bool:
         """Return True if this event was already processed. Tracks the ID otherwise."""
@@ -4549,6 +4598,18 @@ def _apply_yaml_config(yaml_cfg: dict, matrix_cfg: dict) -> dict | None:
         if isinstance(ar, list):
             ar = ",".join(str(v) for v in ar)
         os.environ["MATRIX_ALLOWED_ROOMS"] = str(ar)
+    allowed_servers = matrix_cfg.get("allowed_servers")
+    if allowed_servers is not None and not os.getenv("MATRIX_ALLOWED_SERVERS"):
+        if isinstance(allowed_servers, list):
+            allowed_servers = ",".join(str(v) for v in allowed_servers)
+        os.environ["MATRIX_ALLOWED_SERVERS"] = str(allowed_servers)
+    if (
+        "authorize_allowed_room_members" in matrix_cfg
+        and not os.getenv("MATRIX_AUTHORIZE_ALLOWED_ROOM_MEMBERS")
+    ):
+        os.environ["MATRIX_AUTHORIZE_ALLOWED_ROOM_MEMBERS"] = str(
+            matrix_cfg["authorize_allowed_room_members"]
+        ).lower()
     ignore_patterns = matrix_cfg.get("ignore_user_patterns")
     if ignore_patterns is not None and not os.getenv("MATRIX_IGNORE_USER_PATTERNS"):
         if isinstance(ignore_patterns, list):
