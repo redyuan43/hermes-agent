@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from typing import Any
 
 from agent.auxiliary_client import call_llm
@@ -683,8 +684,20 @@ def _attach_reference_guidance(agg_messages: list[dict[str, Any]], guidance: str
 class MoAChatCompletions:
     """OpenAI-chat-compatible facade where the aggregator is the acting model."""
 
-    def __init__(self, preset_name: str, reference_callback: Any = None):
+    def __init__(
+        self,
+        preset_name: str,
+        reference_callback: Any = None,
+        preset_config: Any = None,
+    ):
         self.preset_name = preset_name or "default"
+        # In a multiplexed gateway the agent's provider call can be dispatched
+        # from a child thread that does not inherit the profile ContextVars.
+        # Snapshot the selected profile's MoA block at client construction so
+        # resolving this preset never falls back to the default profile there.
+        self._preset_config = (
+            deepcopy(preset_config) if isinstance(preset_config, dict) else None
+        )
         # Optional display hook. Called as reference outputs become available so
         # frontends can show each reference model's answer as a labelled block
         # before the aggregator acts. Signature:
@@ -798,10 +811,14 @@ class MoAChatCompletions:
             logger.debug("MoA reference_callback failed for %s: %s", event, exc)
 
     def create(self, **api_kwargs: Any) -> Any:
-        from hermes_cli.config import load_config
         from hermes_cli.moa_config import resolve_moa_preset
 
-        preset = resolve_moa_preset(load_config().get("moa") or {}, self.preset_name)
+        config = self._preset_config
+        if config is None:
+            from hermes_cli.config import load_config
+
+            config = load_config().get("moa") or {}
+        preset = resolve_moa_preset(config, self.preset_name)
         messages = list(api_kwargs.get("messages") or [])
         reference_models = preset.get("reference_models") or []
         aggregator = preset.get("aggregator") or {}
@@ -1039,9 +1056,18 @@ class MoAChatCompletions:
 
 
 class MoAClient:
-    def __init__(self, preset_name: str, reference_callback: Any = None):
+    def __init__(
+        self,
+        preset_name: str,
+        reference_callback: Any = None,
+        preset_config: Any = None,
+    ):
         self.chat = type("_MoAChat", (), {})()
-        self.chat.completions = MoAChatCompletions(preset_name, reference_callback=reference_callback)
+        self.chat.completions = MoAChatCompletions(
+            preset_name,
+            reference_callback=reference_callback,
+            preset_config=preset_config,
+        )
 
     def consume_reference_usage(self) -> Any:
         """Pop the pending reference-fan-out usage from the completions facade.

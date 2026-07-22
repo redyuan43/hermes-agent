@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -79,6 +80,49 @@ def test_moa_runtime_provider_uses_virtual_endpoint():
     assert runtime["provider"] == "moa"
     assert runtime["base_url"] == "moa://local"
     assert runtime["api_key"] == "moa-virtual-provider"
+
+
+def test_moa_client_keeps_profile_preset_across_unscoped_child_thread(monkeypatch):
+    """A multiplexed child thread must not reload another profile's MoA block."""
+    from agent.moa_loop import MoAClient
+
+    calls = []
+    config = {
+        "default_preset": "executive_briefing",
+        "presets": {
+            "executive_briefing": {
+                "reference_models": [
+                    {"provider": "openai-codex", "model": "gpt-5.6-luna"},
+                    {"provider": "openai-codex", "model": "gpt-5.6-terra"},
+                ],
+                "aggregator": {
+                    "provider": "openai-codex",
+                    "model": "gpt-5.6-sol",
+                },
+            }
+        },
+    }
+
+    def fake_call_llm(**kwargs):
+        calls.append(kwargs)
+        return _response("advice" if kwargs["task"] == "moa_reference" else "answer")
+
+    monkeypatch.setattr("agent.moa_loop.call_llm", fake_call_llm)
+    client = MoAClient("executive_briefing", preset_config=config)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        response = executor.submit(
+            client.chat.completions.create,
+            messages=[{"role": "user", "content": "compare options"}],
+            tools=[],
+        ).result()
+
+    assert response.choices[0].message.content == "answer"
+    observed = [(call["task"], call["model"]) for call in calls]
+    assert set(observed[:2]) == {
+        ("moa_reference", "gpt-5.6-luna"),
+        ("moa_reference", "gpt-5.6-terra"),
+    }
+    assert observed[2:] == [("moa_aggregator", "gpt-5.6-sol")]
 
 
 def test_moa_does_not_cap_output_tokens(monkeypatch, tmp_path):

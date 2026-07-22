@@ -718,6 +718,10 @@ class SessionEntry:
     # (see sanitize_model_override / SessionStore.set_model_override).
     model_override: Optional[Dict[str, str]] = None
 
+    # Durable smart-routing state. Contains only the pinned profile and pause
+    # flag; provider credentials are always re-resolved at runtime.
+    routing_state: Optional[Dict[str, str]] = None
+
     def to_dict(self) -> Dict[str, Any]:
         result = {
             "session_key": self.session_key,
@@ -753,6 +757,12 @@ class SessionEntry:
             # Defence-in-depth: strip credentials even if a caller stored an
             # unsanitized dict directly on the entry.
             result["model_override"] = sanitize_model_override(self.model_override)
+        if self.routing_state:
+            result["routing_state"] = {
+                key: str(value)
+                for key, value in self.routing_state.items()
+                if key in {"base_profile", "paused"} and value not in (None, "")
+            }
         if self.origin:
             result["origin"] = self.origin.to_dict()
         return result
@@ -824,6 +834,11 @@ class SessionEntry:
             auto_reset_reason=data.get("auto_reset_reason"),
             reset_had_activity=data.get("reset_had_activity", False),
             model_override=sanitize_model_override(data.get("model_override")),
+            routing_state=(
+                {k: str(v) for k, v in data.get("routing_state", {}).items()
+                 if k in {"base_profile", "paused"}}
+                if isinstance(data.get("routing_state"), dict) else None
+            ),
         )
 
 
@@ -2071,6 +2086,27 @@ class SessionStore:
                 return None
             return dict(entry.model_override) if entry.model_override else None
 
+    def set_routing_state(self, session_key: str, state: Optional[Dict[str, Any]]) -> None:
+        with self._lock:
+            self._ensure_loaded_locked()
+            entry = self._entries.get(session_key)
+            if entry is None:
+                return
+            cleaned = {
+                key: str(value) for key, value in (state or {}).items()
+                if key in {"base_profile", "paused"} and value not in (None, "")
+            } or None
+            if entry.routing_state == cleaned:
+                return
+            entry.routing_state = cleaned
+            self._save()
+
+    def get_routing_state(self, session_key: str) -> Optional[Dict[str, str]]:
+        with self._lock:
+            self._ensure_loaded_locked()
+            entry = self._entries.get(session_key)
+            return dict(entry.routing_state) if entry and entry.routing_state else None
+
     def suspend_session(self, session_key: str) -> bool:
         """Mark a session as suspended so it auto-resets on next access.
 
@@ -2256,6 +2292,7 @@ class SessionStore:
                 platform=old_entry.platform,
                 chat_type=old_entry.chat_type,
                 is_fresh_reset=True,
+                routing_state=None,
             )
 
             self._entries[session_key] = new_entry

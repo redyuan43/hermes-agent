@@ -206,6 +206,7 @@ class GatewaySlashCommandsMixin:
         # Clear any session-scoped model/reasoning overrides so the next agent
         # picks up configured defaults instead of previous session switches.
         self._session_model_overrides.pop(session_key, None)
+        await self.async_session_store.set_routing_state(session_key, None)
         self._set_session_reasoning_override(session_key, None)
         if hasattr(self, "_pending_model_notes"):
             self._pending_model_notes.pop(session_key, None)
@@ -1636,6 +1637,16 @@ class GatewaySlashCommandsMixin:
                                 _session_key,
                                 _self._session_model_overrides[_session_key],
                             )
+                            _routing_state = (
+                                await _self.async_session_store.get_routing_state(
+                                    _session_key
+                                )
+                                or {}
+                            )
+                            _routing_state["paused"] = "true"
+                            await _self.async_session_store.set_routing_state(
+                                _session_key, _routing_state
+                            )
                         except Exception:
                             logger.debug(
                                 "Failed to persist session model override",
@@ -1884,6 +1895,14 @@ class GatewaySlashCommandsMixin:
                 await self.async_session_store.set_model_override(
                     session_key,
                     self._session_model_overrides[session_key],
+                )
+                _routing_state = (
+                    await self.async_session_store.get_routing_state(session_key)
+                    or {}
+                )
+                _routing_state["paused"] = "true"
+                await self.async_session_store.set_routing_state(
+                    session_key, _routing_state
                 )
             except Exception:
                 logger.debug(

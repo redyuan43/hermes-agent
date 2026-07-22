@@ -975,6 +975,28 @@ def _ensure_hermes_home_managed(home: Path):
 
 DEFAULT_CONFIG = {
     "model": "",
+    # Optional gateway-only classifier routing. Disabled by default so the
+    # normal model path and its prompt cache remain unchanged.
+    "smart_model_routing": {
+        "enabled": False,
+        "classifier": {
+            "provider": "",
+            "model": "",
+            "base_url": "",
+            "api_mode": "",
+        },
+        "profiles": {
+            "luna": {"provider": "", "model": ""},
+            "terra": {"provider": "", "model": ""},
+            "sol": {"provider": "", "model": ""},
+        },
+        "moa": {"preset": "default"},
+        "trace": {
+            "enabled": True,
+            "dir": "",
+            "retention_days": 7,
+        },
+    },
     "providers": {},
     "fallback_providers": [],
     "credential_pool_strategies": {},
@@ -5207,7 +5229,7 @@ _KNOWN_ROOT_KEYS = {
     "fallback_providers", "credential_pool_strategies", "toolsets",
     "agent", "terminal", "display", "compression", "delegation",
     "auxiliary", "moa", "custom_providers", "context", "memory", "gateway",
-    "sessions", "streaming", "updates", "mcp_servers",
+    "sessions", "streaming", "updates", "mcp_servers", "smart_model_routing",
 }
 
 # Valid fields inside a custom_providers list entry

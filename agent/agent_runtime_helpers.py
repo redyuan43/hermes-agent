@@ -1908,6 +1908,7 @@ def switch_model(agent, new_model, new_provider, api_key='', base_url='', api_mo
         # ── Build new client ──
         if (new_provider or "").strip().lower() == "moa":
             from agent.moa_loop import MoAClient
+            from hermes_cli.config import load_config
 
             # The MoA virtual provider speaks only chat.completions via the
             # MoAClient facade — the aggregator's real transport
@@ -1924,7 +1925,10 @@ def switch_model(agent, new_model, new_provider, api_key='', base_url='', api_mo
             agent.api_key = api_key or "moa-virtual-provider"
             agent.base_url = "moa://local"
             agent._client_kwargs = {}
-            agent.client = MoAClient(agent.model or "default")
+            agent.client = MoAClient(
+                agent.model or "default",
+                preset_config=load_config().get("moa") or {},
+            )
         elif api_mode == "anthropic_messages":
             from agent.anthropic_adapter import (
                 build_anthropic_client,

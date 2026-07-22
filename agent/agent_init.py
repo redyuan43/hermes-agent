@@ -817,6 +817,7 @@ def init_agent(
                     print(f"🔑 Using token: {effective_key[:8]}...{effective_key[-4:]}")
     elif agent.provider == "moa":
         from agent.moa_loop import MoAClient
+        from hermes_cli.config import load_config
         agent.api_mode = "chat_completions"
 
         # Route reference-model outputs to the agent's tool_progress_callback so
@@ -858,6 +859,7 @@ def init_agent(
         agent.client = MoAClient(
             agent.model or "default",
             reference_callback=_moa_reference_relay,
+            preset_config=load_config().get("moa") or {},
         )
         agent._client_kwargs = {}
         agent.api_key = api_key or "moa-virtual-provider"
