@@ -988,7 +988,7 @@ moa:
     facade.create(messages=[{"role": "user", "content": "please review the plan"}], tools=[])
     facade.consume_and_save_trace(session_id="sess-xyz")
 
-    trace_file = home / "moa-traces" / "sess-xyz.jsonl"
+    trace_file = home / "moa-traces" / "moa-sess-xyz.jsonl"
     assert trace_file.exists(), "trace file not written"
     lines = trace_file.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 1

@@ -34,7 +34,7 @@ from hermes_constants import get_hermes_home
 logger = logging.getLogger(__name__)
 
 
-def _traces_enabled_and_dir() -> Optional[Path]:
+def _traces_enabled_and_dir() -> tuple[Optional[Path], dict]:
     """Return the trace directory if ``moa.save_traces`` is on, else None.
 
     Reads config lazily per call (config is cheap to load and this only runs on
@@ -46,15 +46,15 @@ def _traces_enabled_and_dir() -> Optional[Path]:
 
         moa_cfg = (load_config() or {}).get("moa") or {}
     except Exception:  # pragma: no cover - defensive: never break a turn over tracing
-        return None
+        return None, {}
     if not moa_cfg.get("save_traces"):
-        return None
+        return None, {}
     override = moa_cfg.get("trace_dir")
     if override:
         base = Path(os.path.expandvars(os.path.expanduser(str(override))))
     else:
         base = get_hermes_home() / "moa-traces"
-    return base
+    return base, moa_cfg
 
 
 def _sanitize_session_id(session_id: Optional[str]) -> str:
@@ -120,12 +120,16 @@ def save_moa_turn(
     that resolved text was unavailable, it falls back to None and the record
     points at the session store via ``output_location``.
     """
-    base = _traces_enabled_and_dir()
+    base, moa_cfg = _traces_enabled_and_dir()
     if base is None:
         return
     try:
         base.mkdir(parents=True, exist_ok=True)
-        path = base / f"{_sanitize_session_id(session_id)}.jsonl"
+        try:
+            base.chmod(0o700)
+        except OSError:
+            pass
+        path = base / f"moa-{_sanitize_session_id(session_id)}.jsonl"
         # output_location tells an offline reader where the acting text lives:
         # embedded here when we have it (both non-streaming inline capture and
         # streaming after-the-fact capture), else the session-db assistant row.
@@ -161,7 +165,16 @@ def save_moa_turn(
                 "output_location": _output_location,
             },
         }
-        with path.open("a", encoding="utf-8") as f:
+        fd = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        try:
+            retention_days = int(moa_cfg.get("retention_days", 7) or 7)
+            cutoff = time.time() - max(retention_days, 1) * 86400
+            for candidate in base.glob("moa-*.jsonl"):
+                if candidate.stat().st_mtime < cutoff:
+                    candidate.unlink()
+        except OSError:
+            pass
     except Exception as exc:  # pragma: no cover - tracing must never break a turn
         logger.debug("MoA trace write failed (session=%s): %s", session_id, exc)
