@@ -11595,12 +11595,22 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 )
                 context_prompt += _intro_note
         
-        # One-time prompt if no home channel is set for this platform
-        # Skip for webhooks - they deliver directly to configured targets (github_comment, etc.)
+        # One-time prompt per platform if no home channel is configured.
+        # Webhooks deliver directly to configured targets (github_comment, etc.).
         if not history and source.platform and source.platform != Platform.LOCAL and source.platform != Platform.WEBHOOK:
             platform_name = source.platform.value
             env_key = _home_target_env_var(platform_name)
-            if not os.getenv(env_key):
+            home_channel_prompt_flag = f"home_channel_prompt_{platform_name}"
+            try:
+                from agent.onboarding import is_seen, mark_seen
+
+                home_channel_prompt_seen = is_seen(
+                    _load_gateway_config(), home_channel_prompt_flag
+                )
+            except Exception:
+                home_channel_prompt_seen = False
+
+            if not os.getenv(env_key) and not home_channel_prompt_seen:
                 # Slack dispatches all Hermes commands through a single
                 # parent slash command `/hermes`; bare `/sethome` is not
                 # registered and would fail with "app did not respond".
@@ -11617,6 +11627,13 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     f"or ignore to skip."
                 )
                 await self._deliver_platform_notice(source, notice)
+                try:
+                    mark_seen(_hermes_home / "config.yaml", home_channel_prompt_flag)
+                except Exception:
+                    logger.debug(
+                        "Failed to persist home-channel onboarding flag",
+                        exc_info=True,
+                    )
         
         # -----------------------------------------------------------------
         # Voice channel awareness — inject current voice channel state

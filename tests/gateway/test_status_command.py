@@ -388,7 +388,7 @@ async def test_handle_message_persists_agent_token_counts(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_first_run_slack_home_channel_onboarding_uses_parent_command(monkeypatch):
+async def test_first_run_slack_home_channel_onboarding_uses_parent_command(tmp_path, monkeypatch):
     import gateway.run as gateway_run
 
     session_entry = SessionEntry(
@@ -415,6 +415,7 @@ async def test_first_run_slack_home_channel_onboarding_uses_parent_command(monke
         }
     )
 
+    monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
     monkeypatch.delenv("SLACK_HOME_CHANNEL", raising=False)
     monkeypatch.setattr(gateway_run, "_resolve_runtime_agent_kwargs", lambda: {"api_key": "***"})
     monkeypatch.setattr(
@@ -432,7 +433,7 @@ async def test_first_run_slack_home_channel_onboarding_uses_parent_command(monke
 
 
 @pytest.mark.asyncio
-async def test_first_run_non_slack_home_channel_onboarding_keeps_direct_command(monkeypatch):
+async def test_first_run_non_slack_home_channel_onboarding_keeps_direct_command(tmp_path, monkeypatch):
     import gateway.run as gateway_run
 
     session_entry = SessionEntry(
@@ -459,6 +460,7 @@ async def test_first_run_non_slack_home_channel_onboarding_keeps_direct_command(
         }
     )
 
+    monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
     monkeypatch.delenv("TELEGRAM_HOME_CHANNEL", raising=False)
     monkeypatch.setattr(gateway_run, "_resolve_runtime_agent_kwargs", lambda: {"api_key": "***"})
     monkeypatch.setattr(
@@ -472,6 +474,7 @@ async def test_first_run_non_slack_home_channel_onboarding_keeps_direct_command(
     runner.adapters[Platform.TELEGRAM].send.assert_awaited_once()
     onboarding = runner.adapters[Platform.TELEGRAM].send.await_args.args[1]
     assert "Type /sethome" in onboarding
+    assert (tmp_path / "config.yaml").exists()
 
 
 @pytest.mark.asyncio
