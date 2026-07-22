@@ -2295,6 +2295,13 @@ def _platform_config_key(platform: "Platform") -> str:
     return "cli" if platform == Platform.LOCAL else platform.value
 
 
+def _background_review_notifications_enabled(agent: Any) -> bool:
+    """Return whether background-review summaries may be pushed to chat."""
+    return str(
+        getattr(agent, "memory_notifications", "on")
+    ).strip().lower() != "off"
+
+
 def _teams_pipeline_plugin_enabled() -> bool:
     """Return True when the standalone Teams pipeline plugin is enabled."""
     config = _load_gateway_config()
@@ -2832,6 +2839,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         self._show_reasoning = self._load_show_reasoning()
         self._busy_input_mode = self._load_busy_input_mode()
         self._busy_text_mode = self._load_busy_text_mode()
+        self._busy_ack_enabled = self._load_busy_ack_enabled()
         self._restart_drain_timeout = self._load_restart_drain_timeout()
         self._provider_routing = self._load_provider_routing()
         self._fallback_model = self._load_fallback_model()
@@ -5042,6 +5050,17 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         return "queue" if input_mode == "queue" else "interrupt"
 
     @staticmethod
+    def _load_busy_ack_enabled() -> bool:
+        """Load the visible busy-ack toggle from config at gateway startup."""
+        cfg = _load_gateway_runtime_config()
+        raw = cfg_get(cfg, "display", "busy_ack_enabled")
+        if raw is not None:
+            return is_truthy_value(raw, default=True)
+        return os.environ.get(
+            "HERMES_GATEWAY_BUSY_ACK_ENABLED", "true"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
     def _load_restart_drain_timeout() -> float:
         """Load graceful gateway restart/stop drain timeout in seconds."""
         raw = os.getenv("HERMES_RESTART_DRAIN_TIMEOUT", "").strip()
@@ -5617,7 +5636,13 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         # Check if busy ack is disabled — skip sending but still process the input.
         # Placed before debounce so we don't stamp a "last ack" timestamp that was
         # never actually delivered.
-        busy_ack_enabled = os.environ.get("HERMES_GATEWAY_BUSY_ACK_ENABLED", "true").lower() == "true"
+        busy_ack_enabled = getattr(
+            self,
+            "_busy_ack_enabled",
+            os.environ.get(
+                "HERMES_GATEWAY_BUSY_ACK_ENABLED", "true"
+            ).strip().lower() in {"1", "true", "yes", "on"},
+        )
         if not busy_ack_enabled:
             logger.debug("Busy ack suppressed for session %s", session_key)
             return True  # input still processed, just no ack sent
@@ -18469,6 +18494,18 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             _bg_review_pending: list[str] = []
             _bg_review_pending_lock = threading.Lock()
 
+            # Resolve through the shared display resolver so documented
+            # per-platform overrides work. "off" disables only delivery of the
+            # summary; the background review and its memory/skill writes remain
+            # fully enabled.
+            _mem_notif = resolve_display_setting(
+                user_config,
+                _platform_config_key(source.platform),
+                "memory_notifications",
+                "on",
+            )
+            agent.memory_notifications = str(_mem_notif).lower()
+
             def _deliver_bg_review_message(message: str) -> None:
                 if not _status_adapter or not _run_still_current():
                     return
@@ -18495,6 +18532,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             def _bg_review_send(message: str) -> None:
                 if not _status_adapter or not _run_still_current():
                     return
+                if not _background_review_notifications_enabled(agent):
+                    return
                 if not _bg_review_release.is_set():
                     with _bg_review_pending_lock:
                         if not _bg_review_release.is_set():
@@ -18520,11 +18559,6 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             #   off     — no chat notification (still logged to stdout)
             #   on      — generic "💾 Memory updated" (default)
             #   verbose — content preview: "💾 Memory ➕ Hermes Repo..."
-            _mem_notif = user_config.get("display", {}).get("memory_notifications")
-            if isinstance(_mem_notif, bool):
-                _mem_notif = "on" if _mem_notif else "off"
-            agent.memory_notifications = str(_mem_notif).lower() if _mem_notif else "on"
-
             # ------------------------------------------------------------------
             # Clarify callback: present a clarify prompt and block on a response.
             #

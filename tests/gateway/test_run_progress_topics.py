@@ -698,7 +698,10 @@ class QueuedCommentaryAgent:
 
 
 class BackgroundReviewAgent:
+    last_instance = None
+
     def __init__(self, **kwargs):
+        type(self).last_instance = self
         self.background_review_callback = kwargs.get("background_review_callback")
         self.tools = []
 
@@ -1102,6 +1105,33 @@ async def test_run_agent_defers_background_review_notification_until_release(mon
 
     assert result["final_response"] == "done"
     assert adapter.sent == []
+
+
+@pytest.mark.asyncio
+async def test_run_agent_suppresses_background_review_notification_only(monkeypatch, tmp_path):
+    BackgroundReviewAgent.last_instance = None
+    adapter, result = await _run_with_agent(
+        monkeypatch,
+        tmp_path,
+        BackgroundReviewAgent,
+        session_id="sess-bg-review-silent",
+        config_data={"display": {"memory_notifications": "off"}},
+    )
+
+    assert result["final_response"] == "done"
+    assert BackgroundReviewAgent.last_instance is not None
+    assert BackgroundReviewAgent.last_instance.memory_notifications == "off"
+    assert adapter.sent == []
+
+
+def test_background_review_notification_gate_hides_only_chat_summary():
+    from gateway.run import _background_review_notifications_enabled
+
+    silent = SimpleNamespace(memory_notifications="off")
+    visible = SimpleNamespace(memory_notifications="on")
+
+    assert _background_review_notifications_enabled(silent) is False
+    assert _background_review_notifications_enabled(visible) is True
 
 
 @pytest.mark.asyncio

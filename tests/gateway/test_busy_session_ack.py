@@ -63,6 +63,7 @@ def _make_runner():
     runner._running_agents_ts = {}
     runner._pending_messages = {}
     runner._busy_ack_ts = {}
+    runner._busy_ack_enabled = True
     runner._draining = False
     runner._busy_text_mode = "interrupt"
     runner.adapters = {}
@@ -210,6 +211,30 @@ class TestBusySessionAck:
 
         # Verify agent interrupt was called
         agent.interrupt.assert_called_once_with("Are you working?")
+
+    @pytest.mark.asyncio
+    async def test_disabled_ack_still_interrupts_without_sending_notice(self):
+        """Disabling the ack must hide only the bubble, not interrupt behavior."""
+        runner, sentinel = _make_runner()
+        runner._busy_input_mode = "interrupt"
+        runner._busy_ack_enabled = False
+        adapter = _make_adapter(platform_val="weixin")
+
+        event = _make_event(
+            text="Use this newer instruction",
+            platform_val="weixin",
+        )
+        sk = build_session_key(event.source)
+
+        agent = MagicMock()
+        runner._running_agents[sk] = agent
+        runner.adapters[event.source.platform] = adapter
+
+        result = await runner._handle_active_session_busy_message(event, sk)
+
+        assert result is True
+        agent.interrupt.assert_called_once_with("Use this newer instruction")
+        adapter._send_with_retry.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_queue_mode_suppresses_interrupt_and_updates_ack(self):
@@ -607,8 +632,9 @@ class TestBusySessionAck:
         assert "10 min" in content  # elapsed
 
     @pytest.mark.asyncio
-    async def test_telegram_omits_status_detail_by_default(self):
+    async def test_telegram_omits_status_detail_by_default(self, monkeypatch):
         """Telegram busy acks stay concise unless busy_ack_detail is enabled."""
+        monkeypatch.setattr("gateway.run._load_gateway_config", lambda: {})
         runner, sentinel = _make_runner()
         runner._busy_input_mode = "interrupt"
         adapter = _make_adapter()

@@ -46,12 +46,16 @@ _GLOBAL_DEFAULTS: dict[str, Any] = {
     # back-compat, but mobile platforms can opt down to final-answer-first.
     "interim_assistant_messages": True,
     "long_running_notifications": True,
+    "busy_ack_enabled": True,
     "busy_ack_detail": True,
     # Whether busy_input_mode=steer sends a visible "Steered into current run"
     # acknowledgment after successfully injecting the user's mid-turn message.
     # Disable when the platform should steer silently (the text still lands in
     # the active run; only the confirmation echo is suppressed).
     "busy_steer_ack_enabled": True,
+    # Background memory/skill review summaries. The review itself still runs
+    # when this is off; only the standalone chat notification is suppressed.
+    "memory_notifications": "on",
     # When true, delete tool-progress / "⏳ Working — N min" / status bubbles
     # after the final response lands on platforms that support message
     # deletion (e.g. Telegram). Off by default — progress is still shown
@@ -249,6 +253,7 @@ def _normalise(setting: str, value: Any) -> Any:
         "streaming",
         "interim_assistant_messages",
         "long_running_notifications",
+        "busy_ack_enabled",
         "busy_ack_detail",
         "busy_steer_ack_enabled",
         "thinking_progress",
@@ -259,6 +264,11 @@ def _normalise(setting: str, value: Any) -> Any:
                 return "generic"
             return val in {"true", "1", "yes", "on", "raw", "verbose"}
         return bool(value)
+    if setting == "memory_notifications":
+        if isinstance(value, bool):
+            return "on" if value else "off"
+        val = str(value).strip().lower()
+        return val if val in {"off", "on", "verbose"} else "on"
     if setting == "cleanup_progress":
         if isinstance(value, str):
             return value.lower() in {"true", "1", "yes", "on"}
