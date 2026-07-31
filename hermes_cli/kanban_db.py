@@ -1258,9 +1258,25 @@ CREATE TABLE IF NOT EXISTS kanban_notify_subs (
     thread_id     TEXT NOT NULL DEFAULT '',
     user_id       TEXT,
     notifier_profile TEXT,
+    fallback_platform TEXT,
+    fallback_chat_id TEXT,
+    fallback_thread_id TEXT NOT NULL DEFAULT '',
+    fallback_user_id TEXT,
+    fallback_notifier_profile TEXT,
     created_at    INTEGER NOT NULL,
     last_event_id INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (task_id, platform, chat_id, thread_id)
+);
+
+CREATE TABLE IF NOT EXISTS kanban_notify_deliveries (
+    task_id       TEXT NOT NULL,
+    event_id      INTEGER NOT NULL,
+    platform      TEXT NOT NULL,
+    chat_id       TEXT NOT NULL,
+    thread_id     TEXT NOT NULL DEFAULT '',
+    item_key      TEXT NOT NULL,
+    delivered_at INTEGER NOT NULL,
+    PRIMARY KEY (task_id, event_id, platform, chat_id, thread_id, item_key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee_status ON tasks(assignee, status);
@@ -1273,6 +1289,7 @@ CREATE INDEX IF NOT EXISTS idx_runs_task             ON task_runs(task_id, start
 CREATE INDEX IF NOT EXISTS idx_runs_status           ON task_runs(status);
 CREATE INDEX IF NOT EXISTS idx_attachments_task      ON task_attachments(task_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_notify_task           ON kanban_notify_subs(task_id);
+CREATE INDEX IF NOT EXISTS idx_notify_delivery_task  ON kanban_notify_deliveries(task_id);
 """
 
 
@@ -2026,6 +2043,15 @@ def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
             _add_column_if_missing(
                 conn, "kanban_notify_subs", "notifier_profile", "notifier_profile TEXT"
             )
+        for name, ddl in (
+            ("fallback_platform", "fallback_platform TEXT"),
+            ("fallback_chat_id", "fallback_chat_id TEXT"),
+            ("fallback_thread_id", "fallback_thread_id TEXT NOT NULL DEFAULT ''"),
+            ("fallback_user_id", "fallback_user_id TEXT"),
+            ("fallback_notifier_profile", "fallback_notifier_profile TEXT"),
+        ):
+            if name not in notify_cols:
+                _add_column_if_missing(conn, "kanban_notify_subs", name, ddl)
 
     # One-shot backfill: any task that is 'running' before runs existed
     # had its claim_lock / claim_expires / worker_pid on the task row.
@@ -2149,7 +2175,9 @@ _REBUILD_SPECS = {
         "CREATE TABLE kanban_notify_subs ("
         " task_id TEXT NOT NULL, platform TEXT NOT NULL, chat_id TEXT NOT NULL,"
         " thread_id TEXT NOT NULL DEFAULT '', user_id TEXT,"
-        " notifier_profile TEXT, created_at INTEGER NOT NULL,"
+        " notifier_profile TEXT, fallback_platform TEXT, fallback_chat_id TEXT,"
+        " fallback_thread_id TEXT NOT NULL DEFAULT '', fallback_user_id TEXT,"
+        " fallback_notifier_profile TEXT, created_at INTEGER NOT NULL,"
         " last_event_id INTEGER NOT NULL DEFAULT 0,"
         " PRIMARY KEY (task_id, platform, chat_id, thread_id))",
         ("CREATE INDEX idx_notify_task ON kanban_notify_subs(task_id)",),
@@ -5252,6 +5280,9 @@ def delete_archived_task(conn: sqlite3.Connection, task_id: str) -> bool:
         conn.execute("DELETE FROM task_events WHERE task_id = ?", (task_id,))
         conn.execute("DELETE FROM task_runs WHERE task_id = ?", (task_id,))
         conn.execute("DELETE FROM kanban_notify_subs WHERE task_id = ?", (task_id,))
+        conn.execute(
+            "DELETE FROM kanban_notify_deliveries WHERE task_id = ?", (task_id,)
+        )
         cur = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
         return cur.rowcount == 1
 
@@ -5275,6 +5306,9 @@ def delete_task(conn: sqlite3.Connection, task_id: str) -> bool:
         conn.execute("DELETE FROM task_events WHERE task_id = ?", (task_id,))
         conn.execute("DELETE FROM task_runs WHERE task_id = ?", (task_id,))
         conn.execute("DELETE FROM kanban_notify_subs WHERE task_id = ?", (task_id,))
+        conn.execute(
+            "DELETE FROM kanban_notify_deliveries WHERE task_id = ?", (task_id,)
+        )
     recompute_ready(conn)
     return True
 
@@ -8269,6 +8303,11 @@ def add_notify_sub(
     thread_id: Optional[str] = None,
     user_id: Optional[str] = None,
     notifier_profile: Optional[str] = None,
+    fallback_platform: Optional[str] = None,
+    fallback_chat_id: Optional[str] = None,
+    fallback_thread_id: Optional[str] = None,
+    fallback_user_id: Optional[str] = None,
+    fallback_notifier_profile: Optional[str] = None,
 ) -> None:
     """Register a gateway source that wants terminal-state notifications
     for ``task_id``. Idempotent on (task, platform, chat, thread)."""
@@ -8277,23 +8316,49 @@ def add_notify_sub(
         conn.execute(
             """
             INSERT OR IGNORE INTO kanban_notify_subs
-                (task_id, platform, chat_id, thread_id, user_id, notifier_profile, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (task_id, platform, chat_id, thread_id, user_id, notifier_profile,
+                 fallback_platform, fallback_chat_id, fallback_thread_id,
+                 fallback_user_id, fallback_notifier_profile, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (task_id, platform, chat_id, thread_id or "", user_id, notifier_profile, now),
+            (
+                task_id, platform, chat_id, thread_id or "", user_id, notifier_profile,
+                fallback_platform, fallback_chat_id, fallback_thread_id or "",
+                fallback_user_id, fallback_notifier_profile, now,
+            ),
         )
-        if notifier_profile:
-            # Self-heal legacy rows that predate notifier ownership by
-            # backfilling only when the existing value is unset.
-            conn.execute(
-                """
-                UPDATE kanban_notify_subs
-                   SET notifier_profile = ?
-                 WHERE task_id = ? AND platform = ? AND chat_id = ? AND thread_id = ?
-                   AND (notifier_profile IS NULL OR notifier_profile = '')
-                """,
-                (notifier_profile, task_id, platform, chat_id, thread_id or ""),
-            )
+        # Self-heal legacy/idempotent rows without replacing an already
+        # established owner or fallback destination.
+        conn.execute(
+            """
+            UPDATE kanban_notify_subs
+               SET notifier_profile = CASE
+                       WHEN notifier_profile IS NULL OR notifier_profile = ''
+                       THEN ? ELSE notifier_profile END,
+                   fallback_platform = CASE
+                       WHEN fallback_platform IS NULL OR fallback_platform = ''
+                       THEN ? ELSE fallback_platform END,
+                   fallback_chat_id = CASE
+                       WHEN fallback_chat_id IS NULL OR fallback_chat_id = ''
+                       THEN ? ELSE fallback_chat_id END,
+                   fallback_thread_id = CASE
+                       WHEN fallback_thread_id IS NULL OR fallback_thread_id = ''
+                       THEN ? ELSE fallback_thread_id END,
+                   fallback_user_id = CASE
+                       WHEN fallback_user_id IS NULL OR fallback_user_id = ''
+                       THEN ? ELSE fallback_user_id END,
+                   fallback_notifier_profile = CASE
+                       WHEN fallback_notifier_profile IS NULL OR fallback_notifier_profile = ''
+                       THEN ? ELSE fallback_notifier_profile END
+             WHERE task_id = ? AND platform = ? AND chat_id = ? AND thread_id = ?
+            """,
+            (
+                notifier_profile, fallback_platform, fallback_chat_id,
+                fallback_thread_id or "", fallback_user_id,
+                fallback_notifier_profile, task_id, platform, chat_id,
+                thread_id or "",
+            ),
+        )
 
 
 def list_notify_subs(
@@ -8471,6 +8536,106 @@ def rewind_notify_cursor(
     return cur.rowcount > 0
 
 
+def notify_item_delivered(
+    conn: sqlite3.Connection,
+    *,
+    task_id: str,
+    event_id: int,
+    platform: str,
+    chat_id: str,
+    thread_id: Optional[str],
+    item_key: str,
+) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM kanban_notify_deliveries "
+        "WHERE task_id = ? AND event_id = ? AND platform = ? "
+        "AND chat_id = ? AND thread_id = ? AND item_key = ?",
+        (
+            task_id, int(event_id), platform, chat_id, thread_id or "", item_key,
+        ),
+    ).fetchone()
+    return row is not None
+
+
+def mark_notify_item_delivered(
+    conn: sqlite3.Connection,
+    *,
+    task_id: str,
+    event_id: int,
+    platform: str,
+    chat_id: str,
+    thread_id: Optional[str],
+    item_key: str,
+) -> None:
+    with write_txn(conn):
+        conn.execute(
+            "INSERT OR IGNORE INTO kanban_notify_deliveries "
+            "(task_id, event_id, platform, chat_id, thread_id, item_key, delivered_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                task_id, int(event_id), platform, chat_id, thread_id or "",
+                item_key, int(time.time()),
+            ),
+        )
+
+
+def activate_notify_fallback(
+    conn: sqlite3.Connection,
+    *,
+    task_id: str,
+    platform: str,
+    chat_id: str,
+    thread_id: Optional[str],
+    claimed_cursor: int,
+    old_cursor: int,
+) -> Optional[dict]:
+    """Replace a failed primary subscription with its persisted origin route."""
+    with write_txn(conn):
+        row = conn.execute(
+            "SELECT * FROM kanban_notify_subs WHERE task_id = ? AND platform = ? "
+            "AND chat_id = ? AND thread_id = ? AND last_event_id = ?",
+            (
+                task_id, platform, chat_id, thread_id or "", int(claimed_cursor),
+            ),
+        ).fetchone()
+        if row is None or not row["fallback_platform"] or not row["fallback_chat_id"]:
+            return None
+        fallback = {
+            "task_id": task_id,
+            "platform": row["fallback_platform"],
+            "chat_id": row["fallback_chat_id"],
+            "thread_id": row["fallback_thread_id"] or "",
+            "user_id": row["fallback_user_id"],
+            "notifier_profile": row["fallback_notifier_profile"],
+            "created_at": int(time.time()),
+            "last_event_id": int(old_cursor),
+        }
+        conn.execute(
+            "DELETE FROM kanban_notify_subs WHERE task_id = ? AND platform = ? "
+            "AND chat_id = ? AND thread_id = ?",
+            (task_id, platform, chat_id, thread_id or ""),
+        )
+        conn.execute(
+            """
+            INSERT INTO kanban_notify_subs
+                (task_id, platform, chat_id, thread_id, user_id,
+                 notifier_profile, created_at, last_event_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(task_id, platform, chat_id, thread_id) DO UPDATE SET
+                last_event_id = MIN(last_event_id, excluded.last_event_id),
+                user_id = COALESCE(user_id, excluded.user_id),
+                notifier_profile = COALESCE(notifier_profile, excluded.notifier_profile)
+            """,
+            (
+                fallback["task_id"], fallback["platform"], fallback["chat_id"],
+                fallback["thread_id"], fallback["user_id"],
+                fallback["notifier_profile"], fallback["created_at"],
+                fallback["last_event_id"],
+            ),
+        )
+        return fallback
+
+
 # ---------------------------------------------------------------------------
 # Retention + garbage collection
 # ---------------------------------------------------------------------------
@@ -8484,6 +8649,13 @@ def gc_events(
     history."""
     cutoff = int(time.time()) - int(older_than_seconds)
     with write_txn(conn):
+        conn.execute(
+            "DELETE FROM kanban_notify_deliveries WHERE (task_id, event_id) IN "
+            "(SELECT task_id, id FROM task_events WHERE created_at < ? "
+            "AND task_id IN "
+            "(SELECT id FROM tasks WHERE status IN ('done', 'archived')))",
+            (cutoff,),
+        )
         cur = conn.execute(
             "DELETE FROM task_events WHERE created_at < ? AND task_id IN "
             "(SELECT id FROM tasks WHERE status IN ('done', 'archived'))",

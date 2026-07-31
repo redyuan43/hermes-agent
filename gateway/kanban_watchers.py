@@ -11,6 +11,7 @@ behavior-neutral move that lifts ~1,000 LOC out of run.py.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import sqlite3
@@ -202,6 +203,13 @@ class GatewayKanbanWatchersMixin:
                         getattr(platform, "value", str(platform)).lower()
                         for platform in self.adapters.keys()
                     }
+                    for profile_adapters in (
+                        getattr(self, "_profile_adapters", {}) or {}
+                    ).values():
+                        active_platforms.update(
+                            getattr(platform, "value", str(platform)).lower()
+                            for platform in profile_adapters.keys()
+                        )
                     if not active_platforms:
                         logger.debug("kanban notifier: no connected adapters; skipping tick")
                         return deliveries
@@ -322,17 +330,44 @@ class GatewayKanbanWatchersMixin:
                     # (or default) genuinely has no adapter for the platform.
                     adapter = self._authorization_adapter(plat, sub_profile or None)
                     if adapter is None:
-                        logger.debug(
-                            "kanban notifier: adapter %s disconnected before delivery for %s; rewinding claim",
-                            platform_str, sub["task_id"],
+                        sub_key = (
+                            sub["task_id"], sub["platform"], sub["chat_id"],
+                            sub.get("thread_id") or "", sub_profile,
                         )
-                        await asyncio.to_thread(
-                            self._kanban_rewind,
-                            sub,
-                            d["cursor"],
-                            d.get("old_cursor", 0),
-                            board_slug,
+                        fails = sub_fail_counts.get(sub_key, 0) + 1
+                        sub_fail_counts[sub_key] = fails
+                        logger.warning(
+                            "kanban notifier: adapter %s unavailable for %s "
+                            "(attempt %d/%d)",
+                            platform_str, sub["task_id"], fails, MAX_SEND_FAILURES,
                         )
+                        if fails >= MAX_SEND_FAILURES:
+                            fallback = await asyncio.to_thread(
+                                self._kanban_activate_fallback,
+                                sub,
+                                d["cursor"],
+                                d.get("old_cursor", 0),
+                                board_slug,
+                            )
+                            if fallback:
+                                logger.warning(
+                                    "kanban notifier: switched %s to fallback %s/%s",
+                                    sub["task_id"], fallback["platform"],
+                                    fallback["chat_id"],
+                                )
+                            else:
+                                await asyncio.to_thread(
+                                    self._kanban_unsub, sub, board_slug,
+                                )
+                            sub_fail_counts.pop(sub_key, None)
+                        else:
+                            await asyncio.to_thread(
+                                self._kanban_rewind,
+                                sub,
+                                d["cursor"],
+                                d.get("old_cursor", 0),
+                                board_slug,
+                            )
                         continue
                     title = (task.title if task else sub["task_id"])[:120]
                     board_tag = f"[{board_slug}] " if board_slug else ""
@@ -411,11 +446,21 @@ class GatewayKanbanWatchersMixin:
                         sub_key = (
                             sub["task_id"], sub["platform"],
                             sub["chat_id"], sub.get("thread_id") or "",
+                            sub_profile,
                         )
                         try:
-                            await adapter.send(
-                                sub["chat_id"], msg, metadata=metadata,
-                            )
+                            if not await asyncio.to_thread(
+                                self._kanban_item_delivered,
+                                sub, ev.id, "summary", board_slug,
+                            ):
+                                result = await adapter.send(
+                                    sub["chat_id"], msg, metadata=metadata,
+                                )
+                                self._kanban_require_send_success(result, "summary")
+                                await asyncio.to_thread(
+                                    self._kanban_mark_item_delivered,
+                                    sub, ev.id, "summary", board_slug,
+                                )
                             logger.debug(
                                 "kanban notifier: delivered %s event for %s to %s/%s on board %s",
                                 kind, sub["task_id"], platform_str, sub["chat_id"], board_slug,
@@ -424,25 +469,18 @@ class GatewayKanbanWatchersMixin:
                             # any artifact paths the worker referenced in
                             # ``kanban_complete(summary=..., artifacts=[...])``
                             # (or the legacy ``result`` field) as native
-                            # uploads. ``extract_local_files`` finds bare
-                            # absolute paths in the summary;
-                            # ``send_document`` / ``send_image_file`` uploads
-                            # them. Only fires on the ``completed`` event so
-                            # we never spam attachments on retries.
+                            # uploads. Item checkpoints make a retry skip text
+                            # and attachments that already succeeded.
                             if kind == "completed":
-                                try:
-                                    await self._deliver_kanban_artifacts(
-                                        adapter=adapter,
-                                        chat_id=sub["chat_id"],
-                                        metadata=metadata,
-                                        event_payload=getattr(ev, "payload", None),
-                                        task=task,
-                                    )
-                                except Exception as art_exc:
-                                    logger.debug(
-                                        "kanban notifier: artifact delivery for %s failed: %s",
-                                        sub["task_id"], art_exc,
-                                    )
+                                await self._deliver_kanban_artifacts(
+                                    adapter=adapter,
+                                    sub=sub,
+                                    event_id=ev.id,
+                                    metadata=metadata,
+                                    event_payload=getattr(ev, "payload", None),
+                                    task=task,
+                                    board=board_slug,
+                                )
                             # Reset the failure counter on success.
                             sub_fail_counts.pop(sub_key, None)
                         except Exception as exc:
@@ -455,12 +493,29 @@ class GatewayKanbanWatchersMixin:
                                 MAX_SEND_FAILURES, exc,
                             )
                             if fails >= MAX_SEND_FAILURES:
-                                logger.warning(
-                                    "kanban notifier: dropping subscription "
-                                    "%s on %s after %d consecutive send failures",
-                                    sub["task_id"], platform_str, fails,
+                                fallback = await asyncio.to_thread(
+                                    self._kanban_activate_fallback,
+                                    sub,
+                                    d["cursor"],
+                                    d.get("old_cursor", 0),
+                                    board_slug,
                                 )
-                                await asyncio.to_thread(self._kanban_unsub, sub, board_slug)
+                                if fallback:
+                                    logger.warning(
+                                        "kanban notifier: primary failed %d times; "
+                                        "switched %s to origin fallback %s/%s",
+                                        fails, sub["task_id"], fallback["platform"],
+                                        fallback["chat_id"],
+                                    )
+                                else:
+                                    logger.warning(
+                                        "kanban notifier: dropping subscription "
+                                        "%s on %s after %d consecutive send failures",
+                                        sub["task_id"], platform_str, fails,
+                                    )
+                                    await asyncio.to_thread(
+                                        self._kanban_unsub, sub, board_slug,
+                                    )
                                 sub_fail_counts.pop(sub_key, None)
                             else:
                                 await asyncio.to_thread(
@@ -632,14 +687,82 @@ class GatewayKanbanWatchersMixin:
         finally:
             conn.close()
 
+    def _kanban_activate_fallback(
+        self,
+        sub: dict,
+        claimed_cursor: int,
+        old_cursor: int,
+        board: Optional[str] = None,
+    ) -> Optional[dict]:
+        from hermes_cli import kanban_db as _kb
+        conn = _kb.connect(board=board)
+        try:
+            return _kb.activate_notify_fallback(
+                conn,
+                task_id=sub["task_id"],
+                platform=sub["platform"],
+                chat_id=sub["chat_id"],
+                thread_id=sub.get("thread_id") or "",
+                claimed_cursor=claimed_cursor,
+                old_cursor=old_cursor,
+            )
+        finally:
+            conn.close()
+
+    def _kanban_item_delivered(
+        self, sub: dict, event_id: int, item_key: str,
+        board: Optional[str] = None,
+    ) -> bool:
+        from hermes_cli import kanban_db as _kb
+        conn = _kb.connect(board=board)
+        try:
+            return _kb.notify_item_delivered(
+                conn,
+                task_id=sub["task_id"],
+                event_id=event_id,
+                platform=sub["platform"],
+                chat_id=sub["chat_id"],
+                thread_id=sub.get("thread_id") or "",
+                item_key=item_key,
+            )
+        finally:
+            conn.close()
+
+    def _kanban_mark_item_delivered(
+        self, sub: dict, event_id: int, item_key: str,
+        board: Optional[str] = None,
+    ) -> None:
+        from hermes_cli import kanban_db as _kb
+        conn = _kb.connect(board=board)
+        try:
+            _kb.mark_notify_item_delivered(
+                conn,
+                task_id=sub["task_id"],
+                event_id=event_id,
+                platform=sub["platform"],
+                chat_id=sub["chat_id"],
+                thread_id=sub.get("thread_id") or "",
+                item_key=item_key,
+            )
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _kanban_require_send_success(result: Any, item: str) -> None:
+        if result is not None and getattr(result, "success", True) is False:
+            error = getattr(result, "error", None) or "adapter returned failure"
+            raise RuntimeError(f"{item} delivery failed: {error}")
+
     async def _deliver_kanban_artifacts(
         self,
         *,
         adapter,
-        chat_id: str,
+        sub: dict,
+        event_id: int,
         metadata: dict,
         event_payload: Optional[dict],
         task,
+        board: Optional[str] = None,
     ) -> None:
         """Upload artifact files referenced by a completed kanban task.
 
@@ -653,9 +776,9 @@ class GatewayKanbanWatchersMixin:
           2. ``event_payload['summary']`` (truncated first line)
           3. ``task.result`` (legacy fallback)
 
-        Files are deduplicated, missing files are silently skipped (the
-        path may have been mentioned for reference only), and delivery
-        errors are logged but do not break the notifier loop.
+        Files are deduplicated and missing paths are skipped because workers
+        may mention an optional output that was not produced. Each successful
+        upload is checkpointed so later retries send only missing items.
         """
         from pathlib import Path as _Path
 
@@ -673,6 +796,19 @@ class GatewayKanbanWatchersMixin:
             seen.add(expanded)
             candidates.append(expanded)
 
+        def _extract_paths(text: str) -> list[str]:
+            extractor = getattr(adapter, "extract_local_files", None)
+            if not callable(extractor):
+                return []
+            extracted = extractor(text)
+            if (
+                not isinstance(extracted, tuple)
+                or len(extracted) != 2
+                or not isinstance(extracted[0], (list, tuple))
+            ):
+                return []
+            return [str(path) for path in extracted[0]]
+
         # 1. Explicit artifacts list in payload.
         if isinstance(event_payload, dict):
             raw = event_payload.get("artifacts")
@@ -683,16 +819,20 @@ class GatewayKanbanWatchersMixin:
 
             # 2. Paths embedded in the payload summary.
             summary = event_payload.get("summary")
-            if isinstance(summary, str) and summary:
-                paths, _ = adapter.extract_local_files(summary)
-                for p in paths:
+            if (
+                isinstance(summary, str)
+                and summary
+            ):
+                for p in _extract_paths(summary):
                     _add(p)
 
         # 3. Legacy: paths embedded in task.result.
-        if task is not None and getattr(task, "result", None):
+        if (
+            task is not None
+            and getattr(task, "result", None)
+        ):
             result_text = str(task.result)
-            paths, _ = adapter.extract_local_files(result_text)
-            for p in paths:
+            for p in _extract_paths(result_text):
                 _add(p)
 
         if not candidates:
@@ -706,40 +846,48 @@ class GatewayKanbanWatchersMixin:
         _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
         _VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".3gp"}
 
-        from urllib.parse import quote as _quote
-
-        # Partition images so they ride a single send_multiple_images call
-        # on platforms that support batch image uploads (Signal/Slack RPCs).
-        image_paths = [p for p in candidates if _Path(p).suffix.lower() in _IMAGE_EXTS]
-        other_paths = [p for p in candidates if _Path(p).suffix.lower() not in _IMAGE_EXTS]
+        image_paths: list[tuple[str, str]] = []
+        other_paths: list[tuple[str, str]] = []
+        for path in candidates:
+            item_key = "artifact:" + hashlib.sha256(path.encode("utf-8")).hexdigest()
+            if await asyncio.to_thread(
+                self._kanban_item_delivered,
+                sub, event_id, item_key, board,
+            ):
+                continue
+            ext = _Path(path).suffix.lower()
+            target = image_paths if ext in _IMAGE_EXTS else other_paths
+            target.append((path, item_key))
 
         if image_paths:
-            try:
-                batch = [(f"file://{_quote(p)}", "") for p in image_paths]
-                await adapter.send_multiple_images(
-                    chat_id=chat_id, images=batch, metadata=metadata,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "kanban notifier: image batch upload failed: %s", exc,
+            from urllib.parse import quote as _quote
+
+            batch = [(f"file://{_quote(path)}", "") for path, _ in image_paths]
+            result = await adapter.send_multiple_images(
+                chat_id=sub["chat_id"], images=batch, metadata=metadata,
+            )
+            self._kanban_require_send_success(result, "image batch")
+            for _, item_key in image_paths:
+                await asyncio.to_thread(
+                    self._kanban_mark_item_delivered,
+                    sub, event_id, item_key, board,
                 )
 
-        for path in other_paths:
+        for path, item_key in other_paths:
             ext = _Path(path).suffix.lower()
-            try:
-                if ext in _VIDEO_EXTS:
-                    await adapter.send_video(
-                        chat_id=chat_id, video_path=path, metadata=metadata,
-                    )
-                else:
-                    await adapter.send_document(
-                        chat_id=chat_id, file_path=path, metadata=metadata,
-                    )
-            except Exception as exc:
-                logger.warning(
-                    "kanban notifier: artifact upload (%s) failed: %s",
-                    path, exc,
+            if ext in _VIDEO_EXTS:
+                result = await adapter.send_video(
+                    chat_id=sub["chat_id"], video_path=path, metadata=metadata,
                 )
+            else:
+                result = await adapter.send_document(
+                    chat_id=sub["chat_id"], file_path=path, metadata=metadata,
+                )
+            self._kanban_require_send_success(result, path)
+            await asyncio.to_thread(
+                self._kanban_mark_item_delivered,
+                sub, event_id, item_key, board,
+            )
 
     async def _kanban_dispatcher_watcher(self) -> None:
         """Embedded kanban dispatcher — one tick every `dispatch_interval_seconds`.

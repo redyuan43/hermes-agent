@@ -1513,6 +1513,14 @@ DEFAULT_CONFIG = {
         # behaviour — e.g. for a profile that prefers explicit
         # ``kanban_notify-subscribe`` calls per task.
         "auto_subscribe_on_create": True,
+        # Optional profile-local allowlist for kanban_create assignees. An
+        # empty list preserves unrestricted orchestration behavior.
+        "allowed_assignees": [],
+        # Optional stable destination for terminal task notifications. Set
+        # ``use_home_channel`` to route through the configured home channel
+        # for the selected platform instead of repeating a chat ID here.
+        # When configured, this replaces origin-session auto-subscription.
+        "completion_delivery": {},
     },
 
     # Anthropic prompt caching (Claude via OpenRouter or native Anthropic API).

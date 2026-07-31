@@ -6,6 +6,8 @@ from gateway.config import Platform
 from gateway.run import GatewayRunner
 from hermes_cli import kanban_db as kb
 
+_REAL_ASYNCIO_SLEEP = asyncio.sleep
+
 
 class RecordingAdapter:
     def __init__(self):
@@ -23,13 +25,11 @@ class DisconnectedAdapters(dict):
 
 
 async def _run_one_notifier_tick(monkeypatch, runner):
-    real_sleep = asyncio.sleep
-
     async def fake_sleep(delay):
         if delay == 5:
             return None
         runner._running = False
-        await real_sleep(0)
+        await _REAL_ASYNCIO_SLEEP(0)
 
     monkeypatch.setattr(asyncio, "sleep", fake_sleep)
     await runner._kanban_notifier_watcher(interval=1)
@@ -294,6 +294,40 @@ def test_notifier_owning_profile_adapter_no_default_fallback(tmp_path, monkeypat
     assert [ev.kind for ev in _unseen_terminal_events_for(tid, "chat-beta")] == ["completed"]
 
 
+def test_notifier_delivers_via_secondary_profile_adapter(tmp_path, monkeypatch):
+    """A multiplexed secondary profile can own and deliver its notification."""
+    db_path = tmp_path / "secondary-profile-delivery.db"
+    monkeypatch.setenv("HERMES_KANBAN_DB", str(db_path))
+    kb.init_db()
+
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(conn, title="owned by beta", assignee="worker")
+        kb.add_notify_sub(
+            conn,
+            task_id=tid,
+            platform="telegram",
+            chat_id="chat-beta",
+            notifier_profile="beta",
+        )
+        kb.complete_task(conn, tid, summary="done")
+    finally:
+        conn.close()
+
+    secondary_adapter = RecordingAdapter()
+    runner = GatewayRunner.__new__(GatewayRunner)
+    runner._running = True
+    runner.adapters = {}
+    runner._profile_adapters = {"beta": {Platform.TELEGRAM: secondary_adapter}}
+    runner._kanban_sub_fail_counts = {}
+
+    asyncio.run(_run_one_notifier_tick(monkeypatch, runner))
+
+    assert len(secondary_adapter.sent) == 1
+    assert tid in secondary_adapter.sent[0]["text"]
+    assert _unseen_terminal_events_for(tid, "chat-beta") == []
+
+
 def _unseen_terminal_events_for(tid, chat_id):
     conn = kb.connect()
     try:
@@ -307,3 +341,152 @@ def _unseen_terminal_events_for(tid, chat_id):
         return events
     finally:
         conn.close()
+
+
+class RetryArtifactAdapter(RecordingAdapter):
+    def __init__(self, fail_path):
+        super().__init__()
+        self.fail_path = str(fail_path)
+        self.documents = []
+        self._failed_once = False
+
+    @staticmethod
+    def extract_local_files(text):
+        return [], text
+
+    async def send_document(self, chat_id, file_path, metadata=None):
+        self.documents.append(file_path)
+        if file_path == self.fail_path and not self._failed_once:
+            self._failed_once = True
+            raise RuntimeError("transient artifact failure")
+
+
+def test_notifier_retries_only_missing_artifact(tmp_path, monkeypatch):
+    db_path = tmp_path / "artifact-checkpoints.db"
+    monkeypatch.setenv("HERMES_KANBAN_DB", str(db_path))
+    monkeypatch.setenv("HERMES_MEDIA_ALLOW_DIRS", str(tmp_path))
+    kb.init_db()
+    first = tmp_path / "first.pdf"
+    second = tmp_path / "second.pdf"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(conn, title="artifact retry", assignee="worker")
+        kb.add_notify_sub(conn, task_id=tid, platform="telegram", chat_id="chat-1")
+        kb.complete_task(
+            conn,
+            tid,
+            summary="done",
+            metadata={"artifacts": [str(first), str(second)]},
+        )
+    finally:
+        conn.close()
+
+    adapter = RetryArtifactAdapter(second)
+    runner = _make_runner(adapter)
+    asyncio.run(_run_one_notifier_tick(monkeypatch, runner))
+    runner._running = True
+    asyncio.run(_run_one_notifier_tick(monkeypatch, runner))
+
+    assert len(adapter.sent) == 1
+    assert adapter.documents.count(str(first)) == 1
+    assert adapter.documents.count(str(second)) == 2
+
+
+def test_notifier_switches_to_origin_after_three_primary_failures(
+    tmp_path, monkeypatch,
+):
+    db_path = tmp_path / "origin-fallback.db"
+    monkeypatch.setenv("HERMES_KANBAN_DB", str(db_path))
+    kb.init_db()
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(conn, title="fallback", assignee="worker")
+        kb.add_notify_sub(
+            conn,
+            task_id=tid,
+            platform="telegram",
+            chat_id="primary-chat",
+            notifier_profile="beta",
+            fallback_platform="telegram",
+            fallback_chat_id="origin-chat",
+            fallback_notifier_profile="default",
+        )
+        kb.complete_task(conn, tid, summary="done")
+    finally:
+        conn.close()
+
+    primary = FailingAdapter()
+    origin = RecordingAdapter()
+    runner = GatewayRunner.__new__(GatewayRunner)
+    runner.adapters = {Platform.TELEGRAM: origin}
+    runner._profile_adapters = {"beta": {Platform.TELEGRAM: primary}}
+    runner._kanban_sub_fail_counts = {}
+    for _ in range(3):
+        runner._running = True
+        asyncio.run(_run_one_notifier_tick(monkeypatch, runner))
+
+    conn = kb.connect()
+    try:
+        subs = kb.list_notify_subs(conn, tid)
+    finally:
+        conn.close()
+    assert primary.attempts == 3
+    assert len(subs) == 1
+    assert subs[0]["chat_id"] == "origin-chat"
+    assert subs[0]["notifier_profile"] == "default"
+
+    runner._running = True
+    asyncio.run(_run_one_notifier_tick(monkeypatch, runner))
+    assert len(origin.sent) == 1
+    assert origin.sent[0]["chat_id"] == "origin-chat"
+
+
+def test_notifier_routes_matrix_and_weixin_through_named_profiles(
+    tmp_path, monkeypatch,
+):
+    db_path = tmp_path / "named-profile-routes.db"
+    monkeypatch.setenv("HERMES_KANBAN_DB", str(db_path))
+    kb.init_db()
+    conn = kb.connect()
+    try:
+        matrix_tid = kb.create_task(conn, title="matrix result", assignee="worker")
+        weixin_tid = kb.create_task(conn, title="weixin result", assignee="worker")
+        kb.add_notify_sub(
+            conn,
+            task_id=matrix_tid,
+            platform="matrix",
+            chat_id="!room:example.test",
+            notifier_profile="matrix-sender",
+        )
+        kb.add_notify_sub(
+            conn,
+            task_id=weixin_tid,
+            platform="weixin",
+            chat_id="wxid_target",
+            notifier_profile="weixin-sender",
+        )
+        kb.complete_task(conn, matrix_tid, summary="matrix done")
+        kb.complete_task(conn, weixin_tid, summary="weixin done")
+    finally:
+        conn.close()
+
+    matrix_adapter = RecordingAdapter()
+    weixin_adapter = RecordingAdapter()
+    runner = GatewayRunner.__new__(GatewayRunner)
+    runner._running = True
+    runner.adapters = {}
+    runner._profile_adapters = {
+        "matrix-sender": {Platform.MATRIX: matrix_adapter},
+        "weixin-sender": {Platform.WEIXIN: weixin_adapter},
+    }
+    runner._kanban_sub_fail_counts = {}
+
+    asyncio.run(_run_one_notifier_tick(monkeypatch, runner))
+
+    assert [item["chat_id"] for item in matrix_adapter.sent] == [
+        "!room:example.test",
+    ]
+    assert [item["chat_id"] for item in weixin_adapter.sent] == ["wxid_target"]
