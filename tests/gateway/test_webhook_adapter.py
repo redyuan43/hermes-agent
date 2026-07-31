@@ -946,6 +946,65 @@ class TestMultiplexProfileWebhookAuthentication:
             "X-GitHub-Event": "push",
         }
 
+    def test_compatibility_profile_resolver_does_not_pass_bad_allowlist(self, tmp_path, monkeypatch):
+        adapter = _make_adapter(
+            routes={
+                "gh": {
+                    "profile": "worker",
+                    "secret": "route-secret",
+                    "events": ["pull_request"],
+                    "prompt": "PR: {action}",
+                }
+            },
+            host="127.0.0.1",
+        )
+
+        # Existing compatibility tests often pass a bare positional-style
+        # shim that only accepts ``multiplex``; that must keep working when
+        # profile_allowlist is a non-sequence value.
+        self._configure_profiles(adapter, tmp_path, monkeypatch)
+        adapter.gateway_runner.config.multiplex_profile_allowlist = MagicMock()
+
+        req = _mock_request(match_info={"profile": "worker"})
+        assert adapter._resolve_request_profile(req) == "worker"
+
+    def test_resolve_request_profile_passes_nonempty_sequence_allowlist(self, tmp_path, monkeypatch):
+        adapter = _make_adapter(
+            routes={
+                "gh": {
+                    "profile": "worker",
+                    "secret": "route-secret",
+                    "events": ["pull_request"],
+                    "prompt": "PR: {action}",
+                }
+            },
+            host="127.0.0.1",
+        )
+
+        runner = MagicMock()
+        runner.config.multiplex_profiles = True
+        runner.config.multiplex_profile_allowlist = ["worker"]
+        adapter.gateway_runner = runner
+
+        captured = {}
+
+        def _profiles_to_serve(multiplex, profile_allowlist):
+            captured["profile_allowlist"] = profile_allowlist
+            return [
+                ("default", tmp_path),
+                ("worker", tmp_path / "profiles" / "worker"),
+                ("other", tmp_path / "profiles" / "other"),
+            ]
+
+        monkeypatch.setattr(
+            "hermes_cli.profiles.profiles_to_serve",
+            _profiles_to_serve,
+        )
+
+        req = _mock_request(match_info={"profile": "worker"})
+        assert adapter._resolve_request_profile(req) == "worker"
+        assert captured["profile_allowlist"] == ["worker"]
+
     @pytest.mark.asyncio
     async def test_route_secret_is_bound_to_named_profile(
         self, tmp_path, monkeypatch

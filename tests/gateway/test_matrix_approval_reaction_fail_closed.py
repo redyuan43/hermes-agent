@@ -124,6 +124,15 @@ def _run(adapter, event):
 class TestApprovalReactionFailClosed:
     """_on_reaction approval auth must be fail-closed (parity with Telegram)."""
 
+    def test_authorize_inbound_sender_on_compat_adapter_is_fail_closed(self):
+        """object.__new__ compatibility state defaults to empty policy values."""
+        adapter = object.__new__(MatrixAdapter)
+        assert adapter.authorize_inbound_sender(
+            "@stranger:matrix.org",
+            "group",
+            "!room:matrix.org",
+        ) is None
+
     def test_no_allowlist_no_allow_all_denies(self, monkeypatch):
         """No MATRIX_ALLOWED_USERS + no GATEWAY_ALLOW_ALL_USERS → deny."""
         monkeypatch.delenv("MATRIX_ALLOWED_USERS", raising=False)
@@ -131,5 +140,4 @@ class TestApprovalReactionFailClosed:
         adapter = _make_adapter(allowed_user_ids=None)
         event = _make_event("@stranger:matrix.org", "$prompt-event-1")
         assert _run(adapter, event) is False
-
 

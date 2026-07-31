@@ -872,11 +872,26 @@ def test_create_uses_configured_completion_delivery(monkeypatch, worker_env, tmp
     monkeypatch.setenv("MATRIX_HOME_ROOM", "!delivery:example.test")
     monkeypatch.setenv("HERMES_SESSION_PLATFORM", "matrix")
     monkeypatch.setenv("HERMES_SESSION_CHAT_ID", "!origin:example.test")
+    monkeypatch.setenv("HERMES_SESSION_THREAD_ID", "t-42")
+    monkeypatch.setenv("HERMES_SESSION_USER_ID", "user-99")
     monkeypatch.setenv("HERMES_SESSION_PROFILE", "matrix-tech")
 
-    from tools import kanban_tools as kt
-    out = kt._handle_create({"title": "deliver", "assignee": "family"})
-    d = json.loads(out)
+    from gateway import session_context
+
+    session_context.set_session_vars(
+        platform="",
+        chat_id="",
+        thread_id="",
+        user_id="",
+        profile="",
+    )
+
+    try:
+        from tools import kanban_tools as kt
+        out = kt._handle_create({"title": "deliver", "assignee": "family"})
+        d = json.loads(out)
+    finally:
+        session_context.reset_session_vars()
     assert d["ok"] is True
     assert d["subscribed"] is True
 
@@ -887,6 +902,8 @@ def test_create_uses_configured_completion_delivery(monkeypatch, worker_env, tmp
     assert subs[0]["notifier_profile"] == "default"
     assert subs[0]["fallback_chat_id"] == "!origin:example.test"
     assert subs[0]["fallback_notifier_profile"] == "matrix-tech"
+    assert subs[0]["fallback_thread_id"] == "t-42"
+    assert subs[0]["fallback_user_id"] == "user-99"
 
 
 def test_create_delivery_override_beats_profile_default(monkeypatch, worker_env, tmp_path):

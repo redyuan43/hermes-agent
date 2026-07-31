@@ -4242,12 +4242,22 @@ class TurnRunner:
                 log_message="interim_assistant_callback scheduling error",
             )
 
-        turn_route = self._runner._resolve_turn_agent_config(
-            ctx.message,
-            model,
-            runtime_kwargs,
-            smart_route=getattr(ctx, "smart_route", None),
-        )
+        smart_route = getattr(ctx, "smart_route", None)
+        if smart_route is not None:
+            turn_route = self._runner._resolve_turn_agent_config(
+                ctx.message,
+                model,
+                runtime_kwargs,
+                smart_route=smart_route,
+            )
+        else:
+            # Some test/plugin stubs still implement the historical
+            # three-argument signature; avoid passing smart_route when absent.
+            turn_route = self._runner._resolve_turn_agent_config(
+                ctx.message,
+                model,
+                runtime_kwargs,
+            )
 
         # Check agent cache — reuse the AIAgent from the previous message
         # in this session to preserve the frozen system prompt and tool
@@ -12609,12 +12619,15 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 if isinstance(retry_claim, tuple):
                     claimed[retry_claim] = active
 
-        for profile_name, profile_home in profiles_to_serve(
-            multiplex=True,
-            profile_allowlist=getattr(
-                self.config, "multiplex_profile_allowlist", None
-            ),
-        ):
+        _allowlist = getattr(self.config, "multiplex_profile_allowlist", None)
+        if isinstance(_allowlist, (list, tuple, set)) and _allowlist:
+            _profile_iter = profiles_to_serve(
+                multiplex=True, profile_allowlist=_allowlist
+            )
+        else:
+            _profile_iter = profiles_to_serve(multiplex=True)
+
+        for profile_name, profile_home in _profile_iter:
             if profile_name == active:
                 continue  # handled by the primary startup loop
             try:

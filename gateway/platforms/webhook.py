@@ -552,14 +552,17 @@ class WebhookAdapter(BasePlatformAdapter):
             return None
         try:
             from hermes_cli.profiles import profiles_to_serve
+
+            profile_allowlist = getattr(
+                cfg, "multiplex_profile_allowlist", ()
+            )
+            serve_kwargs: dict[str, object] = {"multiplex": True}
+            if isinstance(profile_allowlist, (list, tuple, set)) and profile_allowlist:
+                serve_kwargs["profile_allowlist"] = profile_allowlist
+
             served = {
                 name
-                for name, _ in profiles_to_serve(
-                    multiplex=True,
-                    profile_allowlist=getattr(
-                        cfg, "multiplex_profile_allowlist", None
-                    ),
-                )
+                for name, _ in profiles_to_serve(**serve_kwargs)
             }
         except Exception:
             return _PROFILE_REJECTED

@@ -1384,27 +1384,30 @@ def _resolve_completion_delivery(delivery: Any) -> dict:
     }
 
 
+def _session_env_value(name: str) -> str:
+    """Read session origin metadata from ContextVar first, with env fallback."""
+    from gateway.session_context import get_session_env
+
+    raw = get_session_env(name, "")
+    return raw if raw else os.environ.get(name, "")
+
+
 def _origin_delivery() -> Optional[dict]:
     try:
-        from gateway.session_context import get_session_env
-
-        platform = get_session_env("HERMES_SESSION_PLATFORM", "")
-        chat_id = get_session_env("HERMES_SESSION_CHAT_ID", "")
+        platform = _session_env_value("HERMES_SESSION_PLATFORM")
+        chat_id = _session_env_value("HERMES_SESSION_CHAT_ID")
         if not platform or not chat_id:
-            session_key = (
-                get_session_env("HERMES_SESSION_KEY", "")
-                or os.environ.get("HERMES_SESSION_KEY", "")
-            )
+            session_key = _session_env_value("HERMES_SESSION_KEY")
             if not session_key:
                 return None
             platform, chat_id = "tui", session_key
         return {
             "platform": platform,
             "chat_id": chat_id,
-            "thread_id": get_session_env("HERMES_SESSION_THREAD_ID", "") or None,
-            "user_id": get_session_env("HERMES_SESSION_USER_ID", "") or None,
+            "thread_id": _session_env_value("HERMES_SESSION_THREAD_ID") or None,
+            "user_id": _session_env_value("HERMES_SESSION_USER_ID") or None,
             "sender_profile": (
-                get_session_env("HERMES_SESSION_PROFILE", "")
+                _session_env_value("HERMES_SESSION_PROFILE")
                 or os.environ.get("HERMES_PROFILE")
             ),
         }
@@ -1490,9 +1493,8 @@ def _maybe_auto_subscribe(conn: Any, task_id: str) -> bool:
     platform = ""
     chat_id = ""
     try:
-        from gateway.session_context import get_session_env
-        platform = get_session_env("HERMES_SESSION_PLATFORM", "")
-        chat_id = get_session_env("HERMES_SESSION_CHAT_ID", "")
+        platform = _session_env_value("HERMES_SESSION_PLATFORM")
+        chat_id = _session_env_value("HERMES_SESSION_CHAT_ID")
         if not platform or not chat_id:
             # TUI / desktop fallback: platform/chat_id ContextVars are
             # cleared for TUI sessions, but the parent process exports
@@ -1507,20 +1509,17 @@ def _maybe_auto_subscribe(conn: Any, task_id: str) -> bool:
             # every CLI invocation, which is exactly the over-eager
             # behaviour that got #19718 reverted upstream. The TUI
             # poller keys on HERMES_SESSION_KEY.
-            session_key = (
-                get_session_env("HERMES_SESSION_KEY", "")
-                or os.environ.get("HERMES_SESSION_KEY", "")
-            )
+            session_key = _session_env_value("HERMES_SESSION_KEY")
             if not session_key:
                 return False  # CLI / cron / test — no persistent channel
             platform = "tui"
             chat_id = session_key
-        thread_id = get_session_env("HERMES_SESSION_THREAD_ID", "") or None
-        user_id = get_session_env("HERMES_SESSION_USER_ID", "") or None
-        chat_type = get_session_env("HERMES_SESSION_CHAT_TYPE", "") or None
-        message_id = get_session_env("HERMES_SESSION_MESSAGE_ID", "") or ""
+        thread_id = _session_env_value("HERMES_SESSION_THREAD_ID") or None
+        user_id = _session_env_value("HERMES_SESSION_USER_ID") or None
+        chat_type = _session_env_value("HERMES_SESSION_CHAT_TYPE") or None
+        message_id = _session_env_value("HERMES_SESSION_MESSAGE_ID")
         notifier_profile = (
-            get_session_env("HERMES_SESSION_PROFILE", "")
+            _session_env_value("HERMES_SESSION_PROFILE")
             or os.environ.get("HERMES_PROFILE")
         )
         if not notifier_profile:

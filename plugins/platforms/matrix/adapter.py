@@ -1232,17 +1232,36 @@ class MatrixAdapter(BasePlatformAdapter):
         existing Matrix installations while allowing multiplexed adapters to
         authorize without consulting process-global environment state.
         """
-        if not self._allowed_servers and not self._authorize_allowed_room_members:
+        allowed_servers = set(
+            getattr(self, "_allowed_servers", ())
+            if isinstance(getattr(self, "_allowed_servers", ()), (set, list, tuple))
+            else ()
+        )
+        authorize_allowed_room_members = bool(
+            getattr(self, "_authorize_allowed_room_members", False)
+        )
+        allowed_user_ids = set(
+            getattr(self, "_allowed_user_ids", ())
+            if isinstance(getattr(self, "_allowed_user_ids", ()), (set, list, tuple))
+            else ()
+        )
+        allowed_room_ids = set(
+            getattr(self, "_allowed_room_ids", ())
+            if isinstance(getattr(self, "_allowed_room_ids", ()), (set, list, tuple))
+            else ()
+        )
+
+        if not allowed_servers and not authorize_allowed_room_members:
             return None
         if not user_id:
             return False
-        if user_id in self._allowed_user_ids:
+        if user_id in allowed_user_ids:
             return True
         if (
             chat_type in {"group", "forum", "channel"}
-            and self._authorize_allowed_room_members
+            and authorize_allowed_room_members
             and bool(chat_id)
-            and chat_id in self._allowed_room_ids
+            and chat_id in allowed_room_ids
         ):
             return True
         if chat_type not in {"group", "forum", "channel"}:
@@ -1251,7 +1270,7 @@ class MatrixAdapter(BasePlatformAdapter):
                 if (
                     localpart
                     and separator
-                    and server.lower() in self._allowed_servers
+                    and server.lower() in allowed_servers
                 ):
                     return True
         return False

@@ -1958,6 +1958,7 @@ DEFAULT_CONFIG = {
         "platforms": {
             "telegram": {"streaming": True},
             "discord": {"streaming": False},
+            "slack": {"streaming": False},
         },
         # Gateway runtime-metadata footer appended to the FINAL message of a turn
         # (disabled by default to keep replies minimal). When enabled, renders
@@ -2476,6 +2477,13 @@ DEFAULT_CONFIG = {
         "bots_require_inline_mention": False,  # Multi-bot rooms: if True, another bot must type @thisbot in its message to trigger a reply; a Discord reply/quote alone won't. Prevents two bots auto-replying to each other forever. Does not affect humans.
         "history_backfill": True,         # If True, prepend recent channel scrollback when bot is triggered (recovers messages missed while require_mention gated them out)
         "history_backfill_limit": 50,     # Max number of recent messages to scan when assembling the backfill block
+        "missed_message_backfill": {
+            "enabled": False,             # Replay missed Discord messages after reconnect/startup
+            "channels": "",               # Comma-separated channel IDs; empty uses free_response_channels
+            "window_seconds": 21600,      # Inspect only messages from the last 6 hours
+            "limit": 100,                 # Global cap on messages scanned per reconnect
+            "max_dispatches": 10,         # Cap on recovered messages dispatched per reconnect
+        },
         "reactions": True,             # Add 👀/✅/❌ reactions to messages during processing
         "channel_prompts": {},         # Per-channel ephemeral system prompts (forum parents apply to child threads)
         # Opt-in DM role-based auth (#12136). By default, DISCORD_ALLOWED_ROLES
@@ -3019,6 +3027,46 @@ DEFAULT_CONFIG = {
         # GBs of disk on heavy users.  Opt in only if you have an external
         # tool that consumes the JSON files directly.
         "write_json_snapshots": False,
+        # When true, auto-archive (soft-hide, never delete) sessions that
+        # haven't been touched in ``auto_archive_days`` days, once per
+        # (roughly) min_interval_hours.  "Touched" is last activity, not
+        # creation, so an old-but-recently-used session is spared.  Pinned
+        # sessions are always exempt.  Off by default — opt in explicitly.
+        "auto_archive": False,
+        # Idle threshold (days of no activity) before auto-archive hides a
+        # session.  Only applies when auto_archive is true.
+        "auto_archive_days": 3,
+        # Search-index (FTS) storage optimization — the compact v23 layout
+        # that drops duplicate content copies and stops trigram-indexing tool
+        # output (typically reclaims ~60%+ of state.db on heavy users). It is
+        # OPT-IN: existing databases keep their working legacy index until the
+        # user runs `hermes sessions optimize-storage`, because the rebuild is
+        # disk-heavy and long on large DBs (see that command's disk preflight).
+        #
+        #   "advise" (default): `hermes update` prints a one-line notice with
+        #     the reclaimable size and the command, when a legacy index is
+        #     detected. Nothing is changed automatically.
+        #   "require": the notice is shown as a REQUIRED upgrade (firmer copy),
+        #     and future tooling may gate on it. Flip this default in a future
+        #     release when we're ready to make the v23 layout mandatory — the
+        #     command, progress bar, and resumability are already in place, so
+        #     enforcement is a copy/gating change, not new migration code.
+        #   "off": suppress the notice entirely.
+        "fts_optimize_notice": "advise",
+        # CJK-bigram search index (messages_fts_cjk, cjk_unicode61 loadable
+        # tokenizer). When the extension is built (native/fts5_cjk/build.sh →
+        # ~/.hermes/lib/libfts5_cjk.so), 1-2 char CJK terms (日文, 项目, ...)
+        # get index-speed exact matching instead of LIKE full-table scans.
+        # True (default): use the index when the extension is present; the
+        # setting is inert when it isn't. False: never load the extension or
+        # serve the cjk index. Bridged to HERMES_CJK_FTS (internal carrier).
+        "cjk_fts": True,
+        # Slow session-search log threshold in milliseconds: searches at or
+        # above it log one INFO line with the routing path taken (fts_cjk /
+        # fts5 / trigram / like_scan) so latency regressions stay
+        # attributable per query shape. 0 logs every search.
+        # Bridged to HERMES_SEARCH_SLOW_MS (internal carrier).
+        "search_slow_ms": 1000,
     },
 
     # Contextual first-touch onboarding hints (see agent/onboarding.py).

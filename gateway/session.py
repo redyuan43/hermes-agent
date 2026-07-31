@@ -1221,7 +1221,9 @@ class SessionStore:
         self._db = None
         try:
             from hermes_state import SessionDB
-            self._db = SessionDB()
+            from hermes_constants import get_hermes_home
+
+            self._db = SessionDB(db_path=get_hermes_home() / "state.db")
         except Exception as e:
             print(f"[gateway] Warning: SQLite session store unavailable, falling back to JSONL: {e}")
 
