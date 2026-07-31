@@ -35,6 +35,7 @@ class _RecordingHandler(BaseHTTPRequestHandler):
     redirect_to = ""
     redirect_status = 302
     requests: list[tuple[str, dict[str, str]]] = []
+    response_payload = {"data": []}
 
     def _record(self) -> None:
         type(self).requests.append(
@@ -48,7 +49,7 @@ class _RecordingHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         self._record()
-        body = json.dumps({"data": []}).encode()
+        body = json.dumps(type(self).response_payload).encode()
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -442,6 +443,13 @@ def test_probe_api_models_drops_custom_credentials_on_wire():
 class _LmStudioSourceHandler(BaseHTTPRequestHandler):
     redirect_to = ""
 
+    def do_GET(self):
+        body = b"{}"
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_POST(self):
         self.rfile.read(int(self.headers.get("Content-Length", "0")))
         self.send_response(302)
@@ -538,6 +546,8 @@ def test_lmstudio_load_post_drops_bearer_on_redirect(monkeypatch):
     source = ThreadingHTTPServer(("127.0.0.1", 0), _LmStudioSourceHandler)
     Thread(target=source.serve_forever, daemon=True).start()
     _RecordingHandler.requests = []
+    _original_response_payload = _RecordingHandler.response_payload
+    _RecordingHandler.response_payload = {"load_config": {"context_length": 4096}}
     _LmStudioSourceHandler.redirect_to = f"http://localhost:{sink.server_port}/sink"
     monkeypatch.setattr(
         models,
@@ -557,6 +567,7 @@ def test_lmstudio_load_post_drops_bearer_on_redirect(monkeypatch):
     finally:
         source.shutdown()
         sink.shutdown()
+        _RecordingHandler.response_payload = _original_response_payload
 
     assert loaded == 4096
     method, headers = _RecordingHandler.requests[-1]

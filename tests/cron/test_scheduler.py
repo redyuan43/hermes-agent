@@ -548,24 +548,8 @@ class TestRunJobSessionPersistence:
             "cron.scheduler.advance_next_run"
         ) as advance, patch("cron.scheduler.run_one_job") as run_one:
             assert tick(verbose=False, sync=True, can_dispatch=lambda: False) == 0
-
-        fake_db = MagicMock()
-
-        with patch("cron.scheduler._hermes_home", tmp_path), \
-             patch("cron.scheduler.get_due_jobs", return_value=[job]), \
-             patch("cron.scheduler.advance_next_run"), \
-             patch("cron.scheduler.mark_job_run") as mock_mark, \
-             patch("cron.scheduler.save_job_output", return_value="/tmp/out.md"), \
-             patch("cron.scheduler._resolve_origin", return_value=None), \
-             patch("cron.scheduler.run_job", return_value=(True, "output", "", None)):
-            tick(verbose=False)
-
-        # Should be called with success=False because final_response is empty
-        mock_mark.assert_called_once()
-        call_args = mock_mark.call_args
-        assert call_args[0][0] == "empty-job"
-        assert call_args[0][1] is False  # success should be False
-        assert "empty" in call_args[0][2].lower()  # error should mention empty
+        assert advance.call_count == 0
+        run_one.assert_not_called()
 
     def test_run_job_sets_auto_delivery_env_from_dotenv_home_channel(self, tmp_path, monkeypatch):
         job = {
@@ -799,8 +783,6 @@ class TestRunJobSessionPersistence:
         assert os.getenv("HERMES_CRON_AUTO_DELIVER_CHAT_ID") is None
         assert os.getenv("HERMES_CRON_AUTO_DELIVER_THREAD_ID") is None
         assert fake_db.close.call_count == 2
-        advance.assert_not_called()
-        run_one.assert_not_called()
 
 
 class TestRunJobConfigLogging:

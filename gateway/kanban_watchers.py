@@ -189,6 +189,7 @@ class GatewayKanbanWatchersMixin:
         # A genuinely dead chat still drops, just ~60s later — a fine trade
         # for an unattended gate where a false drop means silent work pileup.
         MAX_SEND_FAILURES = 12
+        MAX_ORIGIN_FALLBACK_FAILURES = 3
         sub_fail_counts: dict[tuple, int] = getattr(
             self, "_kanban_sub_fail_counts", {}
         )
@@ -197,6 +198,66 @@ class GatewayKanbanWatchersMixin:
         if not notifier_profile:
             notifier_profile = self._active_profile_name()
             self._kanban_notifier_profile = notifier_profile
+
+        def _delivery_failure_limit(sub: dict) -> int:
+            fallback_platform = bool(sub.get("fallback_platform"))
+            fallback_chat_id = bool(sub.get("fallback_chat_id"))
+            return MAX_ORIGIN_FALLBACK_FAILURES if fallback_platform and fallback_chat_id else MAX_SEND_FAILURES
+
+        async def _handle_queued_failure(
+            *,
+            sub: dict,
+            sub_key: tuple,
+            cursor: int,
+            old_cursor: int,
+            board_slug: Optional[str],
+            operation: str,
+            max_failures: int,
+            reason: str,
+            exc: Optional[BaseException],
+        ) -> None:
+            fails = sub_fail_counts.get(sub_key, 0) + 1
+            sub_fail_counts[sub_key] = fails
+            failure_reason = reason
+            if exc is not None:
+                failure_reason = f"{reason}: {exc}"
+            logger.warning(
+                "kanban notifier: %s failed for %s on %s (attempt %d/%d): %s",
+                operation,
+                sub["task_id"],
+                sub["platform"],
+                fails,
+                max_failures,
+                failure_reason,
+            )
+            if fails >= max_failures:
+                fallback = await asyncio.to_thread(
+                    self._kanban_activate_fallback,
+                    sub,
+                    cursor,
+                    old_cursor,
+                    board_slug,
+                )
+                if fallback:
+                    logger.warning(
+                        "kanban notifier: switched %s to fallback %s/%s",
+                        sub["task_id"], fallback["platform"], fallback["chat_id"],
+                    )
+                else:
+                    logger.warning(
+                        "kanban notifier: dropping subscription %s on %s after %d consecutive %s failures",
+                        sub["task_id"], sub["platform"], fails, operation,
+                    )
+                    await asyncio.to_thread(self._kanban_unsub, sub, board_slug)
+                sub_fail_counts.pop(sub_key, None)
+            else:
+                await asyncio.to_thread(
+                    self._kanban_rewind,
+                    sub,
+                    cursor,
+                    old_cursor,
+                    board_slug,
+                )
 
         # Initial delay so the gateway can finish wiring adapters.
         await asyncio.sleep(5)
@@ -375,43 +436,21 @@ class GatewayKanbanWatchersMixin:
                     adapter = self._authorization_adapter(plat, sub_profile or None)
                     if adapter is None:
                         sub_key = (
-                            sub["task_id"], sub["platform"], sub["chat_id"],
-                            sub.get("thread_id") or "", sub_profile,
+                            sub["task_id"], sub["platform"],
+                            sub["chat_id"], sub.get("thread_id") or "",
+                            sub_profile,
                         )
-                        fails = sub_fail_counts.get(sub_key, 0) + 1
-                        sub_fail_counts[sub_key] = fails
-                        logger.warning(
-                            "kanban notifier: adapter %s unavailable for %s "
-                            "(attempt %d/%d)",
-                            platform_str, sub["task_id"], fails, MAX_SEND_FAILURES,
+                        await _handle_queued_failure(
+                            sub=sub,
+                            sub_key=sub_key,
+                            cursor=d["cursor"],
+                            old_cursor=d.get("old_cursor", 0),
+                            board_slug=board_slug,
+                            operation="adapter-lookup",
+                            max_failures=_delivery_failure_limit(sub),
+                            reason=f"adapter {platform_str} unavailable",
+                            exc=None,
                         )
-                        if fails >= MAX_SEND_FAILURES:
-                            fallback = await asyncio.to_thread(
-                                self._kanban_activate_fallback,
-                                sub,
-                                d["cursor"],
-                                d.get("old_cursor", 0),
-                                board_slug,
-                            )
-                            if fallback:
-                                logger.warning(
-                                    "kanban notifier: switched %s to fallback %s/%s",
-                                    sub["task_id"], fallback["platform"],
-                                    fallback["chat_id"],
-                                )
-                            else:
-                                await asyncio.to_thread(
-                                    self._kanban_unsub, sub, board_slug,
-                                )
-                            sub_fail_counts.pop(sub_key, None)
-                        else:
-                            await asyncio.to_thread(
-                                self._kanban_rewind,
-                                sub,
-                                d["cursor"],
-                                d.get("old_cursor", 0),
-                                board_slug,
-                            )
                         continue
                     title = (task.title if task else sub["task_id"])[:120]
                     board_tag = f"[{board_slug}] " if board_slug else ""
@@ -422,6 +461,7 @@ class GatewayKanbanWatchersMixin:
                     sub_key = (
                         sub["task_id"], sub["platform"],
                         sub["chat_id"], sub.get("thread_id") or "",
+                        sub_profile,
                     )
                     for ev in d["events"]:
                         kind = ev.kind
@@ -552,29 +592,48 @@ class GatewayKanbanWatchersMixin:
                             # the self-post outcome, not by skipping the send.
                             continue
                         try:
-                            _send_res = await adapter.send(
-                                sub["chat_id"], msg, metadata=metadata,
-                            )
-                            # A SendResult(success=False) without an exception
-                            # (returned by push-capable adapters on a genuine
-                            # transient failure) must count as a FAILED
-                            # delivery — otherwise the cursor advances and the
-                            # event is permanently lost. Adapters returning
-                            # None (or anything non-SendResult shaped) keep
-                            # the legacy "no exception == delivered" contract.
-                            if getattr(_send_res, "success", True) is False:
-                                raise RuntimeError(
-                                    "adapter send() reported failure: "
-                                    f"{getattr(_send_res, 'error', None) or 'unknown error'}"
+                            summary_already_delivered = False
+                            if kind == "completed":
+                                summary_already_delivered = await asyncio.to_thread(
+                                    self._kanban_item_delivered,
+                                    sub, ev.id, "summary", board_slug,
                                 )
-                            await asyncio.to_thread(
-                                self._kanban_mark_item_delivered,
-                                sub, ev.id, "summary", board_slug,
-                            )
-                            logger.debug(
-                                "kanban notifier: delivered %s event for %s to %s/%s on board %s",
-                                kind, sub["task_id"], platform_str, sub["chat_id"], board_slug,
-                            )
+                                if summary_already_delivered:
+                                    logger.debug(
+                                        "kanban notifier: skipping already delivered summary "
+                                        "for %s (event %s) on %s/%s",
+                                        sub["task_id"], ev.id, platform_str,
+                                        sub["chat_id"],
+                                    )
+                            if not summary_already_delivered:
+                                _send_res = await adapter.send(
+                                    sub["chat_id"], msg, metadata=metadata,
+                                )
+                                # A SendResult(success=False) without an exception
+                                # (returned by push-capable adapters on a genuine
+                                # transient failure) must count as a FAILED
+                                # delivery — otherwise the cursor advances and the
+                                # event is permanently lost. Adapters returning
+                                # None (or anything non-SendResult shaped) keep
+                                # the legacy "no exception == delivered" contract.
+                                if getattr(_send_res, "success", True) is False:
+                                    raise RuntimeError(
+                                        "adapter send() reported failure: "
+                                        f"{getattr(_send_res, 'error', None) or 'unknown error'}"
+                                    )
+                                await asyncio.to_thread(
+                                    self._kanban_mark_item_delivered,
+                                    sub, ev.id, "summary", board_slug,
+                                )
+                                logger.debug(
+                                    "kanban notifier: delivered %s event for %s to %s/%s on board %s",
+                                    kind, sub["task_id"], platform_str, sub["chat_id"], board_slug,
+                                )
+                            elif kind == "completed":
+                                logger.debug(
+                                    "kanban notifier: summary already delivered for %s to %s/%s on board %s",
+                                    sub["task_id"], platform_str, sub["chat_id"], board_slug,
+                                )
                             # After delivering the text notification, surface
                             # any artifact paths the worker referenced in
                             # ``kanban_complete(summary=..., artifacts=[...])``
@@ -594,47 +653,17 @@ class GatewayKanbanWatchersMixin:
                             # Reset the failure counter on success.
                             sub_fail_counts.pop(sub_key, None)
                         except Exception as exc:
-                            fails = sub_fail_counts.get(sub_key, 0) + 1
-                            sub_fail_counts[sub_key] = fails
-                            logger.warning(
-                                "kanban notifier: send failed for %s on %s "
-                                "(attempt %d/%d): %s",
-                                sub["task_id"], platform_str, fails,
-                                MAX_SEND_FAILURES, exc,
+                            await _handle_queued_failure(
+                                sub=sub,
+                                sub_key=sub_key,
+                                cursor=d["cursor"],
+                                old_cursor=d.get("old_cursor", 0),
+                                board_slug=board_slug,
+                                operation="send",
+                                max_failures=_delivery_failure_limit(sub),
+                                reason="send/summary/artifact failure",
+                                exc=exc,
                             )
-                            if fails >= MAX_SEND_FAILURES:
-                                fallback = await asyncio.to_thread(
-                                    self._kanban_activate_fallback,
-                                    sub,
-                                    d["cursor"],
-                                    d.get("old_cursor", 0),
-                                    board_slug,
-                                )
-                                if fallback:
-                                    logger.warning(
-                                        "kanban notifier: primary failed %d times; "
-                                        "switched %s to origin fallback %s/%s",
-                                        fails, sub["task_id"], fallback["platform"],
-                                        fallback["chat_id"],
-                                    )
-                                else:
-                                    logger.warning(
-                                        "kanban notifier: dropping subscription "
-                                        "%s on %s after %d consecutive send failures",
-                                        sub["task_id"], platform_str, fails,
-                                    )
-                                    await asyncio.to_thread(
-                                        self._kanban_unsub, sub, board_slug,
-                                    )
-                                sub_fail_counts.pop(sub_key, None)
-                            else:
-                                await asyncio.to_thread(
-                                    self._kanban_rewind,
-                                    sub,
-                                    d["cursor"],
-                                    d.get("old_cursor", 0),
-                                    board_slug,
-                                )
                             # Rewind the pre-send claim on transient failure so
                             # a later tick can retry. After too many failures,
                             # dropping the subscription is the terminal action.

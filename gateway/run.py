@@ -13219,6 +13219,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
     def _make_adapter_auth_check(
         self,
         platform: Platform,
+        profile: Optional[str] = None,
         profile_name: Optional[str] = None,
     ) -> Callable[[str, Optional[str], Optional[str]], bool]:
         """Build a platform-bound auth callback for adapter use.
@@ -13233,10 +13234,17 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         full auth chain — platform allowlists, group allowlists, pairing
         store, allow-all flags — stays the single source of truth.
 
-        ``profile_name`` binds the callback to the secondary adapter's own
+        ``profile`` / ``profile_name`` bind the callback to the secondary
+        adapter's own
         multiplex profile, so its ``SessionSource`` resolves that profile's
         secret scope instead of falling back to the active profile.
         """
+        if profile is not None and profile_name is not None and profile != profile_name:
+            raise ValueError(
+                f"Conflicting profile values: profile={profile!r}, profile_name={profile_name!r}"
+            )
+        selected_profile = profile if profile is not None else profile_name
+
         def check(
             user_id: str,
             chat_type: Optional[str] = None,
@@ -13249,7 +13257,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 chat_id=chat_id or "",
                 chat_type=chat_type or "group",
                 user_id=user_id,
-                profile=profile_name,
+                profile=selected_profile,
             )
             return self._is_user_authorized(source)
         return check

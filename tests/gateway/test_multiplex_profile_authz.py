@@ -156,6 +156,21 @@ def test_adapter_auth_callback_stamps_secondary_profile():
     assert seen["source"].profile == "matrix-life"
 
 
+def test_adapter_auth_check_profile_alias_conflict():
+    """Conflicting profile/profile_name keyword values must be rejected explicitly."""
+    from gateway.run import GatewayRunner
+
+    runner = object.__new__(GatewayRunner)
+    runner._is_user_authorized = lambda source: True
+
+    with pytest.raises(ValueError, match="Conflicting profile values"):
+        runner._make_adapter_auth_check(
+            Platform.WECOM,
+            profile="coder",
+            profile_name="dev",
+        )
+
+
 def test_profile_scoped_adapter_sender_policy_is_authoritative(monkeypatch):
     """A secondary adapter decision must not leak through process-global env."""
     from gateway.run import GatewayRunner

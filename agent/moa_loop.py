@@ -1584,46 +1584,6 @@ class MoAChatCompletions:
         except Exception as exc:  # pragma: no cover - display must never break the turn
             logger.debug("MoA reference_callback failed for %s: %s", event, exc)
 
-    def create(self, **api_kwargs: Any) -> Any:
-        from hermes_cli.moa_config import resolve_moa_preset
-
-        config = self._preset_config
-        if config is None:
-            from hermes_cli.config import load_config
-
-            config = load_config().get("moa") or {}
-        preset = resolve_moa_preset(config, self.preset_name)
-        messages = list(api_kwargs.get("messages") or [])
-        reference_models = preset.get("reference_models") or []
-        aggregator = preset.get("aggregator") or {}
-        # Expose the resolved aggregator slot so session cost accounting can
-        # price the aggregator's acting turn at its REAL model/provider. The
-        # agent's model/provider on the MoA path are the virtual preset name
-        # ("closed") and "moa", which have no pricing entry — without this the
-        # aggregator's spend (often the bulk of the turn) is silently dropped
-        # and the session cost reflects advisor fan-out only.
-        self.last_aggregator_slot = dict(aggregator) if aggregator else None
-        # By default MoA does not cap reference or aggregator output: each model
-        # uses its own maximum (max_tokens=None → call_llm omits the parameter,
-        # so a long aggregator synthesis is never truncated and providers that
-        # reject max_tokens don't 400). A preset MAY set reference_max_tokens to
-        # cap ADVISOR output only — advisor generation is the dominant MoA
-        # latency (turn latency correlates ~0.88 with output tokens), and the
-        # aggregator only needs the gist of each advisor's judgement, so a cap
-        # (e.g. 600) measurably cuts per-turn wall time (~44% on a sample task).
-        # The acting aggregator is never capped here (its output is the
-        # user-visible answer).
-        reference_max_tokens = preset.get("reference_max_tokens")
-        # None (the default) = don't send temperature; provider default
-        # applies, matching single-model agent behavior. Presets may pin
-        # explicit values. See _preset_temperature.
-        temperature = _preset_temperature(preset, "reference_temperature")
-        aggregator_temperature = _preset_temperature(preset, "aggregator_temperature")
-        if aggregator_temperature is None and api_kwargs.get("temperature") is not None:
-            # The acting agent's own configured temperature (if any) still
-            # applies to the aggregator, which IS the acting model.
-            aggregator_temperature = api_kwargs.get("temperature")
-
     def prepare(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         """Run the advisor fan-out and return the exact aggregator request.
 
@@ -1748,10 +1708,12 @@ class MoAChatCompletions:
                 raise TypeError("_moa_prepared_request must be a dict")
             return self._call_prepared_aggregator(prepared_request, api_kwargs)
 
-        from hermes_cli.config import load_config
         from hermes_cli.moa_config import resolve_moa_preset
+        from hermes_cli.config import load_config
 
-        _moa_raw = load_config().get("moa") or {}
+        _moa_raw = self._preset_config
+        if _moa_raw is None:
+            _moa_raw = load_config().get("moa") or {}
         preset = resolve_moa_preset(_moa_raw, self.preset_name)
         # Privacy filter mode: '' (off, default) | 'display' | 'full'. See
         # coerce_privacy_filter / the pattern block at the top of this module.
