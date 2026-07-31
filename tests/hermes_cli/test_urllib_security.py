@@ -222,6 +222,8 @@ def test_post_302_uses_urllib_semantics_and_drops_credentials():
     assert "content-type" not in headers
 
 
+
+
 def test_post_307_remains_rejected_by_urllib():
     request = urllib.request.Request(
         "https://models.example.test/load",
@@ -317,6 +319,8 @@ def test_installed_proxy_handler_is_preserved(monkeypatch):
     assert getattr(proxy_handlers[0], "proxies", {}) == {
         "https": "http://proxy.example.test:8443"
     }
+
+
 
 
 def test_installed_request_processor_cannot_resurrect_cross_origin_secret(

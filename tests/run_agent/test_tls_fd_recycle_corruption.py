@@ -144,6 +144,8 @@ def test_force_close_tcp_sockets_handles_multiple_pool_entries():
         assert s.close_calls == 0
 
 
+
+
 # ---------------------------------------------------------------------------
 # Prong 2: _close_request_client_once is thread-aware.
 # ---------------------------------------------------------------------------
@@ -401,6 +403,8 @@ def test_agent_abort_request_openai_client_null_client_is_noop():
 
     # No exception, no side effect.
     agent._abort_request_openai_client(None, reason="interrupt_abort")
+
+
 
 
 # ---------------------------------------------------------------------------
