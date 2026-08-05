@@ -601,7 +601,6 @@ def direct_api_call(agent, api_kwargs: dict):
         client = agent._create_request_openai_client(
             reason=reason,
             api_kwargs=api_kwargs,
-            kind=kind,
         )
         with request_client_lock:
             request_client_holder["client"] = client
@@ -774,7 +773,6 @@ def interruptible_api_call(agent, api_kwargs: dict):
                     else agent._create_request_openai_client(
                         reason=reason,
                         api_kwargs=api_kwargs,
-                        kind=kind,
                     ),
                     kind=kind,
                 ),

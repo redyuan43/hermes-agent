@@ -77,6 +77,22 @@ def test_direct_api_call_runs_inline_and_closes_client():
     assert agent._close_request_openai_client.call_count == 1
 
 
+def test_direct_api_call_uses_request_client_public_signature():
+    """The request client factory does not accept transport-only ``kind``."""
+    agent = _make_agent()
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value = SimpleNamespace(id="strict")
+
+    def _create(*, reason, api_kwargs):
+        assert reason == "chat_completion_request"
+        assert api_kwargs["model"] == "m"
+        return fake_client
+
+    agent._create_request_openai_client = _create
+
+    assert direct_api_call(agent, {"model": "m", "messages": []}).id == "strict"
+
+
 def test_interruptible_api_call_routes_cron_inline_no_worker_thread():
     agent = _make_agent()
     caller_tid = threading.get_ident()
@@ -94,6 +110,25 @@ def test_interruptible_api_call_routes_cron_inline_no_worker_thread():
 
     assert resp.id == "first"
     assert ran_on["tid"] == caller_tid  # no daemon worker thread
+
+
+def test_interruptible_api_call_uses_request_client_public_signature():
+    """Interactive non-streaming calls obey the same strict client API."""
+    agent = _make_agent(platform="cli")
+    agent._compute_non_stream_stale_timeout.return_value = 5.0
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value = SimpleNamespace(id="strict")
+
+    def _create(*, reason, api_kwargs):
+        assert reason == "chat_completion_request"
+        assert api_kwargs["model"] == "m"
+        return fake_client
+
+    agent._create_request_openai_client = _create
+
+    assert interruptible_api_call(
+        agent, {"model": "m", "messages": []}
+    ).id == "strict"
 
 
 def test_direct_api_call_interrupt_aborts_active_client_and_raises():
