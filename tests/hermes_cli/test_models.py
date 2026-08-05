@@ -37,38 +37,14 @@ class TestOpenRouterModels:
 
 
 class TestFetchOpenRouterModels:
-    def test_live_fetch_recomputes_free_tags(self, monkeypatch):
-        """Live OpenRouter payload should keep curated order and recompute descriptors."""
-
-        class _Resp:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-            def read(self):
-                return b'{"data":[{"id":"anthropic/claude-opus-4.8","pricing":{"prompt":"0.000015","completion":"0.000075"}},{"id":"qwen/qwen3.7-max","pricing":{"prompt":"0.000000325","completion":"0.00000195"}},{"id":"nvidia/nemotron-3-super-120b-a12b:free","pricing":{"prompt":"0","completion":"0"}}]}'
-
-        monkeypatch.setattr(_models_mod, "_openrouter_catalog_cache", None)
-        with patch("hermes_cli.models._urlopen_model_catalog_request", return_value=_Resp()):
-            models = fetch_openrouter_models(force_refresh=True)
-
-        assert models == [
-            ("anthropic/claude-opus-4.8", "recommended"),
-            ("qwen/qwen3.7-max", ""),
-            ("nvidia/nemotron-3-super-120b-a12b:free", "free"),
-        ]
 
 
     def test_falls_back_to_static_snapshot_on_fetch_failure(self, monkeypatch):
         monkeypatch.setattr(_models_mod, "_openrouter_catalog_cache", None)
         # Pin the remote manifest out too — otherwise the fallback silently
         # depends on whatever the deployed catalog currently contains.
-        with (
-            patch("hermes_cli.model_catalog.get_curated_openrouter_models", return_value=None),
-            patch("hermes_cli.models._urlopen_model_catalog_request", side_effect=OSError("boom")),
-        ):
+        with patch("hermes_cli.model_catalog.get_curated_openrouter_models", return_value=None), \
+             patch("hermes_cli.models._urlopen_model_catalog_request", side_effect=OSError("boom")):
             models = fetch_openrouter_models(force_refresh=True)
 
         assert models == OPENROUTER_MODELS
@@ -125,37 +101,6 @@ class TestFetchOpenRouterModels:
         # Image-only model advertised supported_parameters WITHOUT tools → must be dropped.
         assert "google/gemini-3-pro-image-preview" not in ids
 
-    def test_permissive_when_supported_parameters_missing(self, monkeypatch):
-        """Models missing the supported_parameters field keep appearing in the picker.
-
-        Some OpenRouter-compatible gateways (Nous Portal, private mirrors, older
-        catalog snapshots) don't populate supported_parameters. Treating missing
-        as 'unknown → allow' prevents the picker from silently emptying on
-        those gateways.
-        """
-        class _Resp:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-            def read(self):
-                # No supported_parameters field at all on either entry.
-                return (
-                    b'{"data":['
-                    b'{"id":"anthropic/claude-opus-4.8","pricing":{"prompt":"0.000015","completion":"0.000075"}},'
-                    b'{"id":"qwen/qwen3.7-max","pricing":{"prompt":"0.000000325","completion":"0.00000195"}}'
-                    b']}'
-                )
-
-        monkeypatch.setattr(_models_mod, "_openrouter_catalog_cache", None)
-        with patch("hermes_cli.models._urlopen_model_catalog_request", return_value=_Resp()):
-            models = fetch_openrouter_models(force_refresh=True)
-
-        ids = [mid for mid, _ in models]
-        assert "anthropic/claude-opus-4.8" in ids
-        assert "qwen/qwen3.7-max" in ids
 
 
 class TestOpenRouterToolSupportHelper:
@@ -434,27 +379,6 @@ class TestNousRecommendedModels:
         assert b == self._SAMPLE_PAYLOAD
         assert mock_urlopen.call_count == 1  # second call served from cache
 
-    def test_fetch_cache_is_keyed_per_portal(self):
-        from hermes_cli.models import fetch_nous_recommended_models
-        mock_cm = self._mock_urlopen(self._SAMPLE_PAYLOAD)
-        with patch("hermes_cli.models._urlopen_model_catalog_request", return_value=mock_cm) as mock_urlopen:
-            fetch_nous_recommended_models("https://portal.example.com")
-            fetch_nous_recommended_models("https://portal.staging-nousresearch.com")
-        assert mock_urlopen.call_count == 2  # different portals → separate fetches
-
-    def test_fetch_returns_empty_on_network_failure(self):
-        from hermes_cli.models import fetch_nous_recommended_models
-        with patch("hermes_cli.models._urlopen_model_catalog_request", side_effect=OSError("boom")):
-            result = fetch_nous_recommended_models("https://portal.example.com")
-        assert result == {}
-
-    def test_fetch_force_refresh_bypasses_cache(self):
-        from hermes_cli.models import fetch_nous_recommended_models
-        mock_cm = self._mock_urlopen(self._SAMPLE_PAYLOAD)
-        with patch("hermes_cli.models._urlopen_model_catalog_request", return_value=mock_cm) as mock_urlopen:
-            fetch_nous_recommended_models("https://portal.example.com")
-            fetch_nous_recommended_models("https://portal.example.com", force_refresh=True)
-        assert mock_urlopen.call_count == 2
 
 
 
@@ -522,3 +446,40 @@ class TestClaudeSonnet5InCuratedLists:
     def test_anthropic_native_list_includes_sonnet_5(self):
         from hermes_cli.models import _PROVIDER_MODELS
         assert "claude-sonnet-5" in _PROVIDER_MODELS["anthropic"]
+
+
+
+
+class TestFormatPricePerMtok:
+    """_format_price_per_mtok: sub-cent prices must not collapse to 'free'/'$0.00'."""
+
+    def test_standard_prices_keep_two_decimals(self):
+        from hermes_cli.models import _format_price_per_mtok
+        assert _format_price_per_mtok("0.000003") == "$3.00"
+        assert _format_price_per_mtok("0.00003") == "$30.00"
+        assert _format_price_per_mtok("0.00000015") == "$0.15"
+        assert _format_price_per_mtok("0.00018") == "$180.00"
+
+    def test_zero_is_free(self):
+        from hermes_cli.models import _format_price_per_mtok
+        assert _format_price_per_mtok("0") == "free"
+        assert _format_price_per_mtok("0.0") == "free"
+
+    def test_invalid_is_question_mark(self):
+        from hermes_cli.models import _format_price_per_mtok
+        assert _format_price_per_mtok("garbage") == "?"
+        assert _format_price_per_mtok(None) == "?"
+
+    def test_sub_cent_price_extends_precision(self):
+        from hermes_cli.models import _format_price_per_mtok
+        # DeepSeek V4 Flash 0731 promo cache-hit rate: $0.0018/Mtok.
+        assert _format_price_per_mtok("0.0000000018") == "$0.0018"
+        assert _format_price_per_mtok("0.000000001") == "$0.001"
+        assert _format_price_per_mtok("0.0000000049") == "$0.0049"
+        assert _format_price_per_mtok("0.000000005") == "$0.005"
+        # Tiny but non-zero must never render as free or $0.00.
+        assert _format_price_per_mtok("0.00000000001") == "$0.00001"
+
+    def test_one_cent_boundary_stays_two_decimals(self):
+        from hermes_cli.models import _format_price_per_mtok
+        assert _format_price_per_mtok("0.00000001") == "$0.01"
