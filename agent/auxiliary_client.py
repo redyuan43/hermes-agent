@@ -4491,6 +4491,7 @@ def _client_cache_key(
     provider: str,
     *,
     async_mode: bool,
+    model: Optional[str] = None,
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
     api_mode: Optional[str] = None,
@@ -4570,6 +4571,7 @@ def _refresh_nous_auxiliary_client(
     cache_key = _client_cache_key(
         cache_provider,
         async_mode=async_mode,
+        model=model,
         base_url=base_url,
         api_key=api_key,
         api_mode=api_mode,
@@ -4745,6 +4747,7 @@ def _get_cached_client(
     cache_key = _client_cache_key(
         provider,
         async_mode=async_mode,
+        model=model,
         base_url=base_url,
         api_key=api_key,
         api_mode=api_mode,
