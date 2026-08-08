@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 960"
      role="img" aria-labelledby="title desc">
   <title id="title">用户、设备、Agent、入口和数据归属</title>
-  <desc id="desc">一个真实用户拥有统一身份和多种消息入口，拥有多台设备；每台设备拥有 General 和专业 Agent；会话与数据归属于 Agent；跨设备只能 General 调用 General。</desc>
+  <desc id="desc">一个真实用户拥有统一身份和多种消息入口；同一设备的微信和 Matrix general 共用 Owner General；不同设备的 Agent 配置与数据相互隔离；跨设备只能 General 调用 General。</desc>
   <defs>
     <marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="8" refY="3"
             orient="auto" markerUnits="strokeWidth">
@@ -33,7 +33,7 @@
 
   <rect width="1600" height="960" fill="#f7f8fa"/>
   <text x="52" y="52" class="title">身份、入口与数据归属</text>
-  <text x="52" y="80" class="subtitle">一个用户身份，多种入口；设备拥有 Agent；Agent 拥有会话和数据</text>
+  <text x="52" y="80" class="subtitle">同机多入口共用 General；不同设备拥有独立 Agent、会话、配置和数据</text>
 
   <rect x="52" y="116" width="300" height="118" class="user"/>
   <text x="82" y="154" class="section">用户 A · user-a</text>
@@ -105,7 +105,7 @@
 
   <rect x="1222" y="228" width="290" height="92" class="agent"/>
   <text x="1250" y="264" class="section">nx2/general</text>
-  <text x="1250" y="290" class="small">唯一联邦入口</text>
+  <text x="1250" y="290" class="small">独立 General · 不共享 nano2 数据</text>
 
   <rect x="1222" y="380" width="290" height="124" class="grant"/>
   <text x="1250" y="416" class="heading">Context Grant</text>
@@ -121,8 +121,8 @@
   <text x="1218" y="678" class="heading">用户拥有设备</text>
   <text x="1218" y="706" class="heading">设备拥有 Agent</text>
   <text x="1218" y="734" class="heading">Agent 拥有会话和数据</text>
-  <text x="1218" y="762" class="heading">Grant 连接两个 General</text>
+  <text x="1218" y="762" class="heading">Grant 只连接两个独立 General</text>
 
   <rect x="52" y="864" width="1496" height="58" class="grant"/>
-  <text x="82" y="900" class="section">唯一跨设备规则：用户 A / nano2 / General → 用户 B / nx2 / General</text>
+  <text x="82" y="900" class="section">跨设备只交换授权任务与结果，不自动共享 SOUL、Skills、记忆、会话或文件</text>
 </svg>

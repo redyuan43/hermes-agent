@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1040"
      role="img" aria-labelledby="title desc">
   <title id="title">用户、设备和 Agent 关系</title>
-  <desc id="desc">用户 A 通过微信进入 nano2 General，通过 Matrix 直接访问本地专业 Profile。跨设备只能调用 nx2 和 nx3 的 General。</desc>
+  <desc id="desc">用户 A 的微信和 Matrix general 进入同一个 nano2 Owner General，Matrix 仍可直接访问本机专业 Profile。跨设备只能调用 nx2 和 nx3 的 General。</desc>
   <defs>
     <marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="8" refY="3"
             orient="auto" markerUnits="strokeWidth">
@@ -32,7 +32,7 @@
 
   <rect width="1600" height="1040" fill="#f7f8fa"/>
   <text x="52" y="52" class="title">用户、设备和 Agent 关系</text>
-  <text x="52" y="80" class="subtitle">入口属于通道，Agent 属于 Profile，联邦边界只公开每台设备的 General</text>
+  <text x="52" y="80" class="subtitle">同机微信与 Matrix @general 共用 Owner General；跨设备只公开各设备的 General</text>
 
   <rect x="52" y="116" width="220" height="94" class="user"/>
   <text x="82" y="154" class="section">用户 A</text>
@@ -60,12 +60,13 @@
   <text x="384" y="180" class="small">独立 Gateway、配置、SOUL、Skills、记忆和数据</text>
 
   <rect x="390" y="222" width="438" height="86" class="agent"/>
-  <text x="418" y="258" class="section">default General</text>
-  <text x="418" y="284" class="small">微信主 Agent · 本地调度器 · 唯一联邦出口</text>
+  <text x="418" y="258" class="section">Owner General · nano2/general</text>
+  <text x="418" y="284" class="small">微信 + Matrix @general · 本地调度器 · 唯一联邦出口</text>
 
-  <rect x="390" y="356" width="202" height="70" class="agent"/>
-  <text x="414" y="386" class="label">matrix-general</text>
-  <text x="414" y="408" class="small">@general</text>
+  <rect x="390" y="356" width="202" height="70" class="channel"/>
+  <text x="414" y="386" class="label">独立通道会话</text>
+  <text x="414" y="408" class="small">微信 Chat / Matrix Room</text>
+  <path d="M491 308 V356" class="inside"/>
 
   <rect x="626" y="356" width="202" height="70" class="agent"/>
   <text x="650" y="386" class="label">matrix-work</text>
@@ -100,7 +101,7 @@
   <path d="M609 308 C609 420 491 420 491 456" class="local"/>
   <path d="M609 308 C609 420 727 420 727 456" class="local"/>
 
-  <path d="M272 494 H390" class="matrix"/>
+  <path d="M272 494 C330 494 330 265 390 265" class="matrix"/>
   <path d="M272 544 C340 544 540 391 626 391" class="matrix"/>
   <path d="M272 594 C334 594 344 491 390 491" class="matrix"/>
   <path d="M272 644 C360 644 544 491 626 491" class="matrix"/>
@@ -145,5 +146,5 @@
   <text x="450" y="967" class="small">本地调用 / 入口映射</text>
   <line x1="640" y1="962" x2="690" y2="962" class="federation"/>
   <text x="702" y="967" class="small">跨设备联邦调用（General → General）</text>
-  <text x="1088" y="967" class="small">专业 Agent 始终位于设备内部边界</text>
+  <text x="1010" y="967" class="small">专业 Agent 位于设备内部；不同设备的配置和数据默认不共享</text>
 </svg>

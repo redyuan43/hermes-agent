@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 960"
      role="img" aria-labelledby="title desc">
   <title id="title">联邦架构现状差距与迁移路线</title>
-  <desc id="desc">从当前 specialist 直达、双 General Profile 和单级授权，迁移到 General 到 General、统一 Owner General、两级授权和可视化管理后台。</desc>
+  <desc id="desc">在白天有人值守的维护窗口内，从 specialist 直达、双 General Profile 和单级授权，迁移到 General 到 General、统一 Owner General、两级授权和可视化管理后台。</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3"
             orient="auto" markerUnits="strokeWidth">
@@ -25,7 +25,7 @@
 
   <rect width="1600" height="960" fill="#f7f8fa"/>
   <text x="52" y="52" class="title">现状差距与迁移路线</text>
-  <text x="52" y="80" class="subtitle">先建立兼容能力，再切换调用路径，最后清理旧配置；任何阶段都保留回滚点</text>
+  <text x="52" y="80" class="subtitle">白天约两小时有人值守；先兼容和归档，再切换路径，最后清理旧入口</text>
 
   <rect x="52" y="122" width="716" height="280" class="current"/>
   <text x="84" y="162" class="section">当前实现</text>
@@ -60,14 +60,14 @@
   <rect x="52" y="500" width="280" height="154" class="phaseActive"/>
   <text x="78" y="536" class="heading">阶段 0 · 兼容基础</text>
   <text x="78" y="566" class="small">增加新字段和双读兼容</text>
-  <text x="78" y="590" class="small">备份数据库与配置</text>
-  <text x="78" y="614" class="small">建立自动回滚检查</text>
+  <text x="78" y="590" class="small">Owner 在线 · 备份数据库与配置</text>
+  <text x="78" y="614" class="small">超出窗口未达门槛则回滚</text>
 
   <rect x="356" y="500" width="280" height="154" class="phase"/>
   <text x="382" y="536" class="heading">阶段 1 · General 边界</text>
   <text x="382" y="566" class="small">nx2 / nx3 增加内部编排</text>
   <text x="382" y="590" class="small">先验证 General 新路径</text>
-  <text x="382" y="614" class="small">暂时保留旧路径回滚</text>
+  <text x="382" y="614" class="small">归档后清理 nx2/research</text>
 
   <rect x="660" y="500" width="280" height="154" class="phase"/>
   <text x="686" y="536" class="heading">阶段 2 · 两级授权</text>
@@ -78,14 +78,14 @@
   <rect x="964" y="500" width="280" height="154" class="phase"/>
   <text x="990" y="536" class="heading">阶段 3 · 入口统一</text>
   <text x="990" y="566" class="small">建立 Canonical User ID</text>
-  <text x="990" y="590" class="small">合并 default 与 @general</text>
-  <text x="990" y="614" class="small">保留各通道独立会话</text>
+  <text x="990" y="590" class="small">default 为主，完整归档旧 Profile</text>
+  <text x="990" y="614" class="small">共享 Agent，保留通道独立会话</text>
 
   <rect x="1268" y="500" width="280" height="154" class="phase"/>
   <text x="1294" y="536" class="heading">阶段 4 · 管理后台</text>
   <text x="1294" y="566" class="small">Admin API 与 RBAC</text>
   <text x="1294" y="590" class="small">拓扑、诊断、影响预演</text>
-  <text x="1294" y="614" class="small">审计和敏感访问保护</text>
+  <text x="1294" y="614" class="small">V1 预留配置发布入口</text>
 
   <path d="M332 577 H356" class="line"/>
   <path d="M636 577 H660" class="line"/>
@@ -105,7 +105,7 @@
   <text x="1038" y="748" class="section">后续版本，不阻塞早期上线</text>
   <text x="1038" y="784" class="small">单设备四租户和虚拟机编排</text>
   <text x="1038" y="816" class="small">细粒度数据 Scope</text>
-  <text x="1038" y="848" class="small">Control Plane 高可用与去中心化增强</text>
+  <text x="1038" y="848" class="small">版本化发布 Skills、Agent 定义和 SOUL</text>
 
   <text x="52" y="934" class="small">切换原则：先部署目标能力，验证通过后再删除旧 specialist 直达关系和旧 Profile。</text>
 </svg>

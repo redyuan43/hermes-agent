@@ -2,10 +2,10 @@
 
 ## 1. 文档信息
 
-- 状态：第二板块核心关系已确认
+- 状态：第二板块核心关系和入口边界已确认
 - 日期：2026-08-08
 - 主题：用户、物理设备、主 Agent、子 Agent 与联邦边界
-- 关键决策：跨物理设备只能调用目标设备的 General Agent
+- 关键决策：同机多入口共用一个 General；跨物理设备只能调用目标设备的 General
 
 ## 2. 核心原则
 
@@ -18,6 +18,10 @@
 - Federation Node Agent 和设备身份。
 
 设备内部的 General Agent 负责管理和调度该设备上的专业 Agent。
+
+同一物理设备上的微信主入口和 Matrix `@general` 是同一个 General Agent
+的两个消息入口，不是两个独立 General。它们共享 Agent 的长期能力和数据，
+但各自保留独立聊天会话。
 
 跨设备调用必须遵循以下边界：
 
@@ -207,7 +211,7 @@ nx2/general   ──> nano2/general
 每台设备原则上只有一个面向该设备用户的微信主入口：
 
 ```text
-微信用户 -> 设备 Gateway -> default General Agent
+微信用户 -> 设备 Gateway -> Owner General Agent
 ```
 
 微信用户不需要记忆专业 Agent 名称。General Agent 根据自然语言自主选择
@@ -219,7 +223,7 @@ nx2/general   ──> nano2/general
 用户 A 微信
     │
     ▼
-nano2/default
+nano2/general
     ├─ 工作和执行问题 -> local:work
     ├─ 战略和决策问题 -> local:ceo
     └─ 研究和验证问题 -> local:research
@@ -228,17 +232,17 @@ nano2/default
 当请求需要另一名用户或另一台设备协作时：
 
 ```text
-nano2/default -> nx2/general
+nano2/general -> nx2/general
 ```
 
 然后由 `nx2/general` 自主完成 nx2 内部调度。
 
 ## 8. Matrix 入口
 
-Matrix 允许用户直接访问本用户设备上的多个专业 Profile。
+Matrix 允许用户直接访问本用户设备上的 General 和多个专业 Profile。
 
 ```text
-@general  -> matrix-general
+@general  -> Owner General（与微信主入口相同）
 @work     -> matrix-work
 @ceo      -> matrix-ceo
 @research -> matrix-research
@@ -247,7 +251,7 @@ Matrix 允许用户直接访问本用户设备上的多个专业 Profile。
 @invest   -> matrix-invest
 ```
 
-Matrix 直连和微信后台调用可以指向同一个专业 Profile：
+Matrix 专业账号和 General 的本地调度可以指向同一个专业 Profile：
 
 ```text
 微信主 Agent 调用 local:work = Matrix 的 matrix-work Profile
@@ -260,7 +264,11 @@ Matrix 直连和微信后台调用可以指向同一个专业 Profile：
 1. 微信主 Agent 在后台自主调用。
 2. 本用户通过 Matrix 对应账号直接提问。
 
-Matrix 直连权限属于 Agent 所在设备的用户体系，不代表该 Agent 自动成为
+`@general` 不再拥有独立的长期数据 Profile。Matrix 的 Room、Thread、
+仅在被提及时响应、附件发送等规则属于 Matrix 通道，不写入共享 General
+的 SOUL。
+
+Matrix 直连权限属于 Agent 所在设备的用户体系，不代表专业 Agent 自动成为
 联邦公开 Agent。
 
 ## 9. 本地调用与联邦调用的区别
@@ -268,7 +276,7 @@ Matrix 直连权限属于 Agent 所在设备的用户体系，不代表该 Agent
 ### 9.1 本地调用
 
 ```text
-nano2/default -> nano2/matrix-research
+nano2/general -> nano2/matrix-research
 ```
 
 特点：
@@ -282,7 +290,7 @@ nano2/default -> nano2/matrix-research
 ### 9.2 联邦调用
 
 ```text
-nano2/default -> nx2/general
+nano2/general -> nx2/general
 ```
 
 特点：
@@ -323,6 +331,15 @@ user-c / nx3 / general
 
 内部专业 Agent 身份仍然存在，但只在本机 Gateway 和本机管理后台中使用。
 
+不同物理设备上的 General 也不是共享实例：
+
+```text
+user-a / nano2 / general != user-b / nx2 / general
+```
+
+它们默认不共享 SOUL、Skills、记忆、会话、文件、模型配置或用户资料。
+联邦调用只交换经过授权的任务输入和结果。
+
 ## 11. 当前实现偏差
 
 截至 2026-08-08，当前部署仍存在以下偏差：
@@ -344,7 +361,7 @@ nano2/default -> nx2/research
 后续实施时应迁移为：
 
 ```text
-nano2/default -> nx2/general
+nano2/general -> nx2/general
 nx2/general -> nx2 内部 Research
 ```
 
@@ -354,13 +371,39 @@ nx2/general -> nx2 内部 Research
 2. nano2 删除 `federation:nx2-research` 路由配置。
 3. nx2 的 Research 保留为 nx2 内部专业 Agent。
 4. 为 nx2/general 配置本地专业 Agent 编排能力。
-5. 已有远程 Research 会话完成迁移或明确终止。
+5. 归档已有远程 Research 的 Context、路由、关系和操作元数据。
 6. Control Plane 删除或撤销直达 Research 的关系。
 7. Federation Console 不再允许创建指向远端专业 Agent 的关系。
 
+已确认采用“归档后统一清理”：核对没有活动请求、操作或 Grant 后，删除旧
+运行入口，不将 `nx2/research` 继续迁移为新的长期调用路径。所有后续调用
+统一进入 `nx2/general`。
+
 本节只记录目标要求和当前偏差，不在本次文档编写中直接修改线上配置。
 
-## 12. 后台管理界面的展示要求
+## 12. 跨设备配置复用
+
+设备间默认不自动共享 Agent 配置。未来需要复用 Skills、Agent 定义或 SOUL
+时，由 Federation Console 提供版本化发布和显式导入：
+
+```text
+源设备发布不可变版本
+        ↓
+目标设备确认导入
+        ↓
+导入后在目标设备独立演化
+```
+
+发布内容只能包含管理员明确选择的 Skills、Agent 定义和 SOUL，不得包含：
+
+- 会话和长期记忆。
+- 用户文件和用户画像。
+- `.env`、Token、私钥或其他凭据。
+- Grant、Context、审批记录和审计正文。
+
+V1 只在后台和数据模型中预留该能力，不提供发布、导入或自动同步操作。
+
+## 13. 后台管理界面的展示要求
 
 Federation Console 的默认拓扑只展示 General 之间的联邦关系：
 
@@ -376,7 +419,7 @@ General 之间的连线表示为跨设备联邦关系；专业 Agent 显示为�
 - 内部 Agent 只显示能力和健康，不显示为跨设备公开端点。
 - 如果检测到历史直达专业 Agent 的关系，后台应标记为架构偏差。
 
-## 13. 验收标准
+## 14. 验收标准
 
 1. 一名用户可以拥有一台或多台物理设备。
 2. 每台设备拥有一个 General Agent 和零个或多个本地专业 Agent。
@@ -390,14 +433,18 @@ General 之间的连线表示为跨设备联邦关系；专业 Agent 显示为�
 10. Federation Console 不能创建指向远端专业 Agent 的关系。
 11. 同名 Agent 在不同用户和设备上保持独立身份、配置和数据。
 12. 当前 `nx2/research` 直达配置被明确识别为待迁移偏差。
+13. 微信与 Matrix `@general` 在同一设备上指向同一个 Owner General。
+14. 不同设备之间不会自动同步 Agent 配置或数据。
 
-## 14. 已确认要求
+## 15. 已确认要求
 
 - 物理设备拥有自己的 Hermes Gateway。
 - 每台设备拥有自己的 General 主 Agent。
 - 每台设备可以拥有多个本地专业子 Agent。
 - 微信使用一个 General 主入口，由其自主分配本机专业 Agent。
+- Matrix `@general` 与微信主入口使用同一个 Owner General。
 - Matrix 可以让本用户直接访问指定的本地专业 Profile。
 - 跨物理设备只允许调用目标设备的 General Agent。
 - 远端专业 Agent 由远端 General 内部调度，不对外直接公开。
-- 当前 `nx2/research` 直达能力需要在后续实施中迁移。
+- 当前 `nx2/research` 直达能力按“归档后统一清理”迁移。
+- 跨设备配置复用采用版本化发布和显式导入，V1 只预留。
