@@ -7,7 +7,6 @@ conversation history.
 
 from __future__ import annotations
 
-import os
 import re
 from typing import Any
 
@@ -29,6 +28,7 @@ _HOME_PATH_RE = re.compile(
     r"(?:/[^\s`\"'<>，。；、,;:!?！？)）\]}]*)?)"
 )
 _MEDIA_PREFIX_RE = re.compile(r"MEDIA:\s*[`\"']?$", re.IGNORECASE)
+_SLACK_HERMES_COMMAND_RE = re.compile(r"/hermes(?=\s|$)", re.IGNORECASE)
 _LOCAL_PATH_PLACEHOLDER = "[local file]"
 _MODEL_IDENTITY_PLACEHOLDER = "当前大模型"
 _MODEL_SERVICE_PLACEHOLDER = "当前模型服务"
@@ -134,18 +134,12 @@ def redact_user_visible_local_paths(text: Any) -> str:
     if not text:
         return text
 
-    home = os.path.expanduser("~")
-    home_prefix = f"{home}/" if home and home != "~" else ""
-
     def repl(match: re.Match[str]) -> str:
         path = match.group("path")
         prefix = text[max(0, match.start() - 32):match.start()]
         if _MEDIA_PREFIX_RE.search(prefix):
             return path
-        expanded = os.path.expanduser(path)
-        if home_prefix and expanded.startswith(home_prefix):
-            return _LOCAL_PATH_PLACEHOLDER
-        return path
+        return _LOCAL_PATH_PLACEHOLDER
 
     return _HOME_PATH_RE.sub(repl, text)
 
@@ -156,7 +150,11 @@ def redact_user_visible_model_identity(text: Any) -> str:
         return "" if text is None else str(text)
     if not text:
         return text
-    protected_spans = [match.span() for match in _HOME_PATH_RE.finditer(text)]
+    protected_spans = sorted(
+        match.span()
+        for pattern in (_HOME_PATH_RE, _SLACK_HERMES_COMMAND_RE)
+        for match in pattern.finditer(text)
+    )
     if protected_spans:
         chunks: list[str] = []
         last = 0

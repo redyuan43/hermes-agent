@@ -1342,14 +1342,18 @@ class TestAuxiliaryPoolAwareness:
         assert stale_client.chat.completions.create.await_count == 1
         assert fresh_async_client.chat.completions.create.await_count == 1
 
-    def test_cached_gmi_client_keeps_explicit_slash_model_override(self):
+    def test_gmi_clients_are_isolated_by_explicit_slash_model(self):
         import agent.auxiliary_client as aux
 
-        fake_client = MagicMock()
+        first_client = MagicMock()
+        second_client = MagicMock()
 
         with patch(
             "agent.auxiliary_client.resolve_provider_client",
-            return_value=(fake_client, "google/gemini-3.1-flash-lite-preview"),
+            side_effect=[
+                (first_client, "google/gemini-3.1-flash-lite-preview"),
+                (second_client, "openai/gpt-5.4-mini"),
+            ],
         ) as mock_resolve:
             aux.shutdown_cached_clients()
             try:
@@ -1359,7 +1363,7 @@ class TestAuxiliaryPoolAwareness:
                     base_url="https://api.gmi-serving.com/v1",
                     api_key="gmi-key",
                 )
-                assert client is fake_client
+                assert client is first_client
                 assert model == "google/gemini-3.1-flash-lite-preview"
 
                 client, model = aux._get_cached_client(
@@ -1371,9 +1375,9 @@ class TestAuxiliaryPoolAwareness:
             finally:
                 aux.shutdown_cached_clients()
 
-        assert client is fake_client
+        assert client is second_client
         assert model == "openai/gpt-5.4-mini"
-        assert mock_resolve.call_count == 1
+        assert mock_resolve.call_count == 2
 
 
 # ── Payment / credit exhaustion fallback ─────────────────────────────────
