@@ -27,6 +27,26 @@ def _make_adapter() -> WeixinAdapter:
     )
 
 
+def test_delivery_ready_requires_connected_transport_and_successful_poll() -> None:
+    adapter = _make_adapter()
+    adapter._running = True
+    assert adapter.delivery_ready is False
+
+    adapter._session_ready = True
+    assert adapter.delivery_ready is True
+
+    adapter._running = False
+    assert adapter.delivery_ready is False
+
+
+def test_delivery_context_revision_does_not_expose_token() -> None:
+    adapter = _make_adapter()
+    key = adapter._token_store._key(adapter._account_id, "wx-user")
+    adapter._token_store._cache[key] = ("secret-context-token", 1234.5)
+
+    assert adapter.delivery_context_revision("wx-user") == "1234.500000"
+
+
 class TestWeixinFormatting:
     def test_format_message_preserves_markdown(self):
         adapter = _make_adapter()
@@ -71,7 +91,7 @@ class TestWeixinFormatting:
     def test_format_message_does_not_wrap_long_code_block_lines(self):
         adapter = _make_adapter()
 
-        command = "hermes " + " ".join(f"--option-{idx}=value" for idx in range(30))
+        command = "python " + " ".join(f"--option-{idx}=value" for idx in range(30))
         content = f"```bash\n{command}\n```"
 
         assert adapter.format_message(content) == content
@@ -240,6 +260,28 @@ class TestWeixinConfig:
 
 
 class TestWeixinStatePersistence:
+    def test_context_token_store_migrates_legacy_values_and_persists_timestamps(
+        self, tmp_path, monkeypatch
+    ):
+        path = tmp_path / "weixin" / "accounts" / "acct.context-tokens.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"wx-user": "legacy-token"}), encoding="utf-8")
+
+        store = ContextTokenStore(str(tmp_path))
+        store.restore("acct")
+        assert store.snapshot("acct", "wx-user") == ("legacy-token", 0.0)
+
+        monkeypatch.setattr(weixin.time, "time", lambda: 1234.5)
+        store.set("acct", "wx-user", "fresh-token")
+        assert store.snapshot("acct", "wx-user") == ("fresh-token", 1234.5)
+        assert json.loads(path.read_text(encoding="utf-8")) == {
+            "wx-user": {"token": "fresh-token", "updated_at": 1234.5}
+        }
+
+        store.delete("acct", "wx-user")
+        assert store.snapshot("acct", "wx-user") == (None, 0.0)
+        assert json.loads(path.read_text(encoding="utf-8")) == {}
+
     def test_save_weixin_account_preserves_existing_file_on_replace_failure(self, tmp_path, monkeypatch):
         account_path = tmp_path / "weixin" / "accounts" / "acct.json"
         account_path.parent.mkdir(parents=True, exist_ok=True)
@@ -502,6 +544,29 @@ class TestWeixinChunkDelivery:
         # queued concurrent sends acquire the gate later and fail before making
         # their own iLink calls.
         assert send_message_mock.await_count == 1
+
+    @patch("gateway.platforms.weixin._send_message", new_callable=AsyncMock)
+    def test_stale_context_retries_tokenless_once_then_requests_real_inbound(
+        self, send_message_mock
+    ):
+        adapter = self._connected_adapter()
+        adapter._token_store.delete = Mock()
+        send_message_mock.side_effect = [
+            {"ret": -2, "errmsg": "prepare failed"},
+            {"ret": -2, "errmsg": "prepare failed"},
+        ]
+
+        result = asyncio.run(adapter.send("wxid_test123", "hello"))
+
+        assert result.success is False
+        assert result.raw_response == {"reason": "context_token_required"}
+        assert result.error_kind == "action_required"
+        assert [
+            call.kwargs["context_token"] for call in send_message_mock.await_args_list
+        ] == ["ctx-token", None]
+        adapter._token_store.delete.assert_called_once_with(
+            "test-account", "wxid_test123"
+        )
 
 
 class TestWeixinOutboundMedia:
@@ -970,9 +1035,9 @@ class TestIsStaleSessionRet:
         # Genuine rate limit — must NOT be treated as stale session.
         assert weixin._is_stale_session_ret(-2, None, "freq limit") is False
 
-    def test_ret_minus_2_with_no_errmsg_is_not_stale(self):
-        assert weixin._is_stale_session_ret(-2, None, None) is False
-        assert weixin._is_stale_session_ret(-2, None, "") is False
+    @pytest.mark.parametrize("message", [None, "", "unknown error", "prepare failed"])
+    def test_ret_minus_2_without_rate_limit_message_requires_context(self, message):
+        assert weixin._is_stale_session_ret(-2, None, message) is True
 
     def test_errcode_minus_14_is_not_matched_here(self):
         # -14 is handled by the separate SESSION_EXPIRED_ERRCODE path; the

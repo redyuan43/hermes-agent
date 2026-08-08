@@ -113,12 +113,14 @@ MESSAGE_DEDUP_TTL_SECONDS = 300
 def _is_stale_session_ret(
     ret: "Optional[int]", errcode: "Optional[int]", errmsg: "Optional[str]",
 ) -> bool:
-    """True when iLink returns ret=-2 / errcode=-2 with 'unknown error',
-    which is a stale-session signal (same as errcode=-14) rather than
-    a genuine rate limit."""
+    """Distinguish stale-context ``-2`` responses from real rate limits."""
     if ret != RATE_LIMIT_ERRCODE and errcode != RATE_LIMIT_ERRCODE:
         return False
-    return (errmsg or "").lower() == "unknown error"
+    return (errmsg or "").strip().lower() in {"", "unknown error", "prepare failed"}
+
+
+class WeixinContextRequiredError(RuntimeError):
+    """The peer must send a real inbound message before outbound can resume."""
 
 
 MEDIA_IMAGE = 1
@@ -284,7 +286,7 @@ class ContextTokenStore:
 
     def __init__(self, hermes_home: str):
         self._root = _account_dir(hermes_home)
-        self._cache: Dict[str, str] = {}
+        self._cache: Dict[str, Tuple[str, float]] = {}
 
     def _path(self, account_id: str) -> Path:
         return self._root / f"{account_id}.context-tokens.json"
@@ -302,24 +304,43 @@ class ContextTokenStore:
             logger.warning("weixin: failed to restore context tokens for %s: %s", _safe_id(account_id), exc)
             return
         restored = 0
-        for user_id, token in data.items():
-            if isinstance(token, str) and token:
-                self._cache[self._key(account_id, user_id)] = token
+        for user_id, value in data.items():
+            token = ""
+            updated_at = 0.0
+            if isinstance(value, str):
+                token = value
+            elif isinstance(value, dict):
+                token = str(value.get("token") or "")
+                try:
+                    updated_at = float(value.get("updated_at") or 0.0)
+                except (TypeError, ValueError):
+                    updated_at = 0.0
+            if token:
+                self._cache[self._key(account_id, user_id)] = (token, updated_at)
                 restored += 1
         if restored:
             logger.info("weixin: restored %d context token(s) for %s", restored, _safe_id(account_id))
 
     def get(self, account_id: str, user_id: str) -> Optional[str]:
-        return self._cache.get(self._key(account_id, user_id))
+        entry = self._cache.get(self._key(account_id, user_id))
+        return entry[0] if entry else None
+
+    def snapshot(self, account_id: str, user_id: str) -> Tuple[Optional[str], float]:
+        entry = self._cache.get(self._key(account_id, user_id))
+        return entry if entry else (None, 0.0)
 
     def set(self, account_id: str, user_id: str, token: str) -> None:
-        self._cache[self._key(account_id, user_id)] = token
+        self._cache[self._key(account_id, user_id)] = (token, time.time())
+        self._persist(account_id)
+
+    def delete(self, account_id: str, user_id: str) -> None:
+        self._cache.pop(self._key(account_id, user_id), None)
         self._persist(account_id)
 
     def _persist(self, account_id: str) -> None:
         prefix = f"{account_id}:"
         payload = {
-            key[len(prefix) :]: value
+            key[len(prefix) :]: {"token": value[0], "updated_at": value[1]}
             for key, value in self._cache.items()
             if key.startswith(prefix)
         }
@@ -1170,6 +1191,7 @@ class WeixinAdapter(BasePlatformAdapter):
         self._poll_session: Optional[aiohttp.ClientSession] = None
         self._send_session: Optional[aiohttp.ClientSession] = None
         self._poll_task: Optional[asyncio.Task] = None
+        self._session_ready = False
         self._dedup = MessageDeduplicator(ttl_seconds=MESSAGE_DEDUP_TTL_SECONDS)
 
         self._account_id = str(extra.get("account_id") or os.getenv("WEIXIN_ACCOUNT_ID", "")).strip()
@@ -1275,6 +1297,7 @@ class WeixinAdapter(BasePlatformAdapter):
         return [str(value).strip()] if str(value).strip() else []
 
     async def connect(self) -> bool:
+        self._session_ready = False
         if not check_weixin_requirements():
             message = "Weixin startup failed: aiohttp and cryptography are required"
             self._set_fatal_error("weixin_missing_dependency", message, retryable=False)
@@ -1322,6 +1345,16 @@ class WeixinAdapter(BasePlatformAdapter):
             )
         return True
 
+    @property
+    def delivery_ready(self) -> bool:
+        """Whether iLink polling has confirmed that outbound delivery is usable."""
+        return self.is_connected and self._session_ready
+
+    def delivery_context_revision(self, chat_id: str) -> Optional[str]:
+        """Return a non-secret revision that changes with fresh inbound context."""
+        token, updated_at = self._token_store.snapshot(self._account_id, chat_id)
+        return f"{updated_at:.6f}" if token else None
+
     async def disconnect(self) -> None:
         _LIVE_ADAPTERS.pop(self._token, None)
         self._running = False
@@ -1337,6 +1370,7 @@ class WeixinAdapter(BasePlatformAdapter):
             except asyncio.CancelledError:
                 pass
         self._poll_task = None
+        self._session_ready = False
         if self._poll_session and not self._poll_session.closed:
             await self._poll_session.close()
         self._poll_session = None
@@ -1371,6 +1405,7 @@ class WeixinAdapter(BasePlatformAdapter):
                 if ret not in {0, None} or errcode not in {0, None}:
                     if (ret == SESSION_EXPIRED_ERRCODE or errcode == SESSION_EXPIRED_ERRCODE
                             or _is_stale_session_ret(ret, errcode, response.get("errmsg"))):
+                        self._session_ready = False
                         logger.error("[%s] Session expired; pausing for 10 minutes", self.name)
                         await asyncio.sleep(600)
                         consecutive_failures = 0
@@ -1387,10 +1422,12 @@ class WeixinAdapter(BasePlatformAdapter):
                     )
                     await asyncio.sleep(BACKOFF_DELAY_SECONDS if consecutive_failures >= MAX_CONSECUTIVE_FAILURES else RETRY_DELAY_SECONDS)
                     if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                        self._session_ready = False
                         consecutive_failures = 0
                     continue
 
                 consecutive_failures = 0
+                self._session_ready = True
                 new_sync_buf = str(response.get("get_updates_buf") or "")
                 if new_sync_buf:
                     sync_buf = new_sync_buf
@@ -1405,6 +1442,7 @@ class WeixinAdapter(BasePlatformAdapter):
                 logger.error("[%s] poll error (%d/%d): %s", self.name, consecutive_failures, MAX_CONSECUTIVE_FAILURES, exc)
                 await asyncio.sleep(BACKOFF_DELAY_SECONDS if consecutive_failures >= MAX_CONSECUTIVE_FAILURES else RETRY_DELAY_SECONDS)
                 if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                    self._session_ready = False
                     consecutive_failures = 0
 
     async def _process_message_safe(self, message: Dict[str, Any]) -> None:
@@ -1761,7 +1799,6 @@ class WeixinAdapter(BasePlatformAdapter):
     ) -> None:
         """Send a text chunk while holding the adapter-wide outbound text gate."""
         last_error: Optional[Exception] = None
-        retried_without_token = False
         for attempt in range(self._send_chunk_retries + 1):
             if self._rate_limit_cooldown_remaining() > 0:
                 raise self._rate_limit_error()
@@ -1785,18 +1822,24 @@ class WeixinAdapter(BasePlatformAdapter):
                             or errcode == SESSION_EXPIRED_ERRCODE
                             or _is_stale_session_ret(ret, errcode, resp.get("errmsg"))
                         )
-                        # Session expired — strip token and retry once
-                        if is_session_expired and not retried_without_token and context_token:
-                            retried_without_token = True
-                            context_token = None
-                            self._token_store._cache.pop(
-                                self._token_store._key(self._account_id, chat_id), None
-                            )
+                        # Session expired — strip token and retry once. A second
+                        # context failure means a real inbound message is needed.
+                        if is_session_expired and context_token:
+                            self._token_store.delete(self._account_id, chat_id)
                             logger.warning(
                                 "[%s] session expired for %s; retrying without context_token",
                                 self.name, _safe_id(chat_id),
                             )
-                            continue
+                            return await self._send_text_chunk_locked(
+                                chat_id=chat_id,
+                                chunk=chunk,
+                                context_token=None,
+                                client_id=client_id,
+                            )
+                        if is_session_expired:
+                            raise WeixinContextRequiredError(
+                                "Fresh Weixin context token required"
+                            )
                         # Rate limit (-2) — backoff and retry
                         is_rate_limited = (
                             ret == RATE_LIMIT_ERRCODE
@@ -1828,6 +1871,8 @@ class WeixinAdapter(BasePlatformAdapter):
                         )
                 self._reset_rate_limit_circuit()
                 return
+            except WeixinContextRequiredError:
+                raise
             except Exception as exc:
                 last_error = exc
                 if attempt >= self._send_chunk_retries:
@@ -1964,7 +2009,25 @@ class WeixinAdapter(BasePlatformAdapter):
             return SendResult(success=True, message_id=last_message_id)
         except Exception as exc:
             logger.error("[%s] send failed to=%s: %s", self.name, _safe_id(chat_id), exc)
-            return SendResult(success=False, error=str(exc))
+            error = str(exc)
+            if isinstance(exc, WeixinContextRequiredError):
+                return SendResult(
+                    success=False,
+                    error=error,
+                    raw_response={"reason": "context_token_required"},
+                    error_kind="action_required",
+                )
+            if "rate limited" in error.lower():
+                return SendResult(
+                    success=False,
+                    error=error,
+                    retryable=True,
+                    retry_after=max(
+                        self._rate_limit_cooldown_remaining(),
+                        self._send_chunk_retry_delay_seconds,
+                    ),
+                )
+            return SendResult(success=False, error=error)
 
     async def _ensure_typing_ticket(self, chat_id: str) -> Optional[str]:
         """Return a valid typing ticket, refreshing from getConfig if expired.

@@ -1641,6 +1641,7 @@ from gateway.platforms.base import (
     MessageType,
     _reply_anchor_for_event,
     merge_pending_message_event,
+    notify_message_processing_status,
 )
 from gateway.restart import (
     DEFAULT_GATEWAY_RESTART_DRAIN_TIMEOUT,
@@ -8551,14 +8552,40 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     )
 
             if audio_paths:
+                await notify_message_processing_status(event, "transcribing")
                 message_text, _successful_transcripts = await self._enrich_message_with_transcription(
                     message_text,
                     audio_paths,
                 )
+                if (
+                    _successful_transcripts
+                    and bool(
+                        (getattr(event, "metadata", None) or {}).get(
+                            "include_stt_transcript_in_reply"
+                        )
+                    )
+                ):
+                    setattr(
+                        event,
+                        "_gateway_reply_transcripts",
+                        tuple(_successful_transcripts),
+                    )
+                await notify_message_processing_status(
+                    event,
+                    "processing",
+                    {
+                        "transcript": "\n".join(_successful_transcripts),
+                    }
+                    if _successful_transcripts
+                    else {},
+                )
                 # Echo each successful transcript back to the user immediately,
                 # before the agent loop runs. Lets the user verify STT quality
                 # in real-time and see the raw whisper output verbatim.
-                if _successful_transcripts:
+                if (
+                    _successful_transcripts
+                    and self._should_echo_stt_transcripts_for_event(event)
+                ):
                     _echo_adapter = self.adapters.get(source.platform)
                     _echo_meta = self._thread_metadata_for_source(source, self._reply_anchor_for_event(event))
                     if _echo_adapter:
@@ -9958,8 +9985,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                         logger.debug("trailing footer send failed: %s", _e)
                 return None
 
-            return response
-            
+            return self._format_event_reply(event, response)
         except Exception as e:
             # Stop typing indicator on error too
             try:
@@ -10849,6 +10875,39 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             return False
 
         return True
+
+    def _should_echo_stt_transcripts(self) -> bool:
+        """Return whether inbound voice/STT transcripts should be echoed to chat."""
+        return bool(getattr(self.config, "stt_echo_transcripts", True))
+
+    def _should_echo_stt_transcripts_for_event(self, event) -> bool:
+        """Honor a per-event transcript-echo suppression request."""
+        metadata = getattr(event, "metadata", None) or {}
+        return (
+            self._should_echo_stt_transcripts()
+            and not bool(metadata.get("suppress_stt_echo"))
+        )
+
+    @staticmethod
+    def _format_event_reply(event, response: Optional[str]) -> Optional[str]:
+        """Apply opt-in, per-event response composition requested by an adapter."""
+        if not response or not bool(
+            (getattr(event, "metadata", None) or {}).get(
+                "include_stt_transcript_in_reply"
+            )
+        ):
+            return response
+        transcripts = tuple(
+            text.strip()
+            for text in (
+                getattr(event, "_gateway_reply_transcripts", ()) or ()
+            )
+            if isinstance(text, str) and text.strip()
+        )
+        if not transcripts:
+            return response
+        transcript = "\n".join(transcripts)
+        return f"{transcript}\n\n{response}"
 
     async def _send_voice_reply(self, event: MessageEvent, text: str) -> None:
         """Generate TTS audio and send as a voice message before the text reply."""
@@ -12873,7 +12932,10 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             )
             # Echo raw transcripts back to the user so voice interrupts
             # feel identical to fresh voice messages.
-            if successful_transcripts:
+            if (
+                successful_transcripts
+                and self._should_echo_stt_transcripts_for_event(event)
+            ):
                 echo_adapter = self.adapters.get(source.platform)
                 echo_meta = {"thread_id": source.thread_id} if source.thread_id else None
                 if echo_adapter:
