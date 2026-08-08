@@ -1,6 +1,7 @@
 """Regression coverage for the Termux broad install profile."""
 
 from pathlib import Path
+import tomllib
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -9,11 +10,13 @@ INSTALL_SH = REPO_ROOT / "scripts" / "install.sh"
 
 
 def test_pyproject_defines_termux_all_without_known_blockers() -> None:
-    text = PYPROJECT.read_text()
-    assert "termux-all = [" in text
-    assert '"hermes-agent[termux]"' in text
-    assert '"hermes-agent[matrix]"' not in text.split("termux-all = [", 1)[1].split("]", 1)[0]
-    assert '"hermes-agent[voice]"' not in text.split("termux-all = [", 1)[1].split("]", 1)[0]
+    project = tomllib.loads(PYPROJECT.read_text())
+    project_name = project["project"]["name"]
+    termux_all = project["project"]["optional-dependencies"]["termux-all"]
+
+    assert f"{project_name}[termux]" in termux_all
+    assert f"{project_name}[matrix]" not in termux_all
+    assert f"{project_name}[voice]" not in termux_all
 
 
 def test_install_script_prefers_termux_all_then_fallbacks() -> None:

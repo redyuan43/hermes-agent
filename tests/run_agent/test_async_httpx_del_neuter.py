@@ -172,6 +172,23 @@ class TestClientCacheBoundedGrowth:
     validated at hit time and stale entries are replaced in-place.
     """
 
+    def test_model_is_part_of_cache_key(self):
+        """Different models for one provider must not share a cached client."""
+        from agent.auxiliary_client import _client_cache_key
+
+        first_key = _client_cache_key(
+            "test_models",
+            async_mode=False,
+            model="model-a",
+        )
+        second_key = _client_cache_key(
+            "test_models",
+            async_mode=False,
+            model="model-b",
+        )
+
+        assert first_key != second_key
+
     def test_same_key_replaces_stale_loop_entry(self):
         """When the loop changes, the old entry should be replaced, not duplicated."""
         from agent.auxiliary_client import (

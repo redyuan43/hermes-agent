@@ -3103,6 +3103,25 @@ def _try_configured_fallback_chain(
     return None, None, ""
 
 
+def _try_configured_fallback_for_unavailable_client(
+    task: Optional[str],
+    failed_provider: str,
+    *,
+    async_mode: bool = False,
+) -> Tuple[Optional[Any], Optional[str], str]:
+    """Resolve the configured safety net when a provider cannot start."""
+    client, model, label = _try_configured_fallback_chain(
+        task or "", failed_provider, reason="provider unavailable"
+    )
+    if client is None:
+        client, model, label = _try_main_agent_model_fallback(
+            failed_provider, task, reason="provider unavailable"
+        )
+    if client is not None and async_mode:
+        client, model = _to_async_client(client, model or "")
+    return client, model, label
+
+
 def _fallback_entry_api_key(entry: Dict[str, Any]) -> Optional[str]:
     """Resolve inline or env-backed API key from a fallback-chain entry."""
     explicit = str(entry.get("api_key") or "").strip()
@@ -4381,8 +4400,6 @@ def resolve_vision_provider_client(
         # Fall back through aggregators (uses their dedicated vision model,
         # not the user's main model) when main provider has no client.
         for candidate in _VISION_AUTO_PROVIDER_ORDER:
-            if candidate == main_provider:
-                continue  # already tried above
             sync_client, default_model = _resolve_strict_vision_backend(candidate)
             if sync_client is not None:
                 return _finalize(candidate, sync_client, default_model)
@@ -4491,6 +4508,7 @@ def _client_cache_key(
     provider: str,
     *,
     async_mode: bool,
+    model: Optional[str] = None,
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
     api_mode: Optional[str] = None,
@@ -4570,6 +4588,7 @@ def _refresh_nous_auxiliary_client(
     cache_key = _client_cache_key(
         cache_provider,
         async_mode=async_mode,
+        model=model,
         base_url=base_url,
         api_key=api_key,
         api_mode=api_mode,
@@ -4745,6 +4764,7 @@ def _get_cached_client(
     cache_key = _client_cache_key(
         provider,
         async_mode=async_mode,
+        model=model,
         base_url=base_url,
         api_key=api_key,
         api_mode=api_mode,
@@ -5293,6 +5313,14 @@ def call_llm(
             task=task,
         )
         if client is None:
+            client, final_model, fallback_label = (
+                _try_configured_fallback_for_unavailable_client(
+                    task, resolved_provider or "auto"
+                )
+            )
+            if client is not None:
+                resolved_provider = fallback_label or resolved_provider
+        if client is None:
             # When the user explicitly chose a non-OpenRouter provider but no
             # credentials were found, fail fast instead of silently routing
             # through OpenRouter (which causes confusing 404s).
@@ -5803,6 +5831,16 @@ async def async_call_llm(
             main_runtime=main_runtime,
             task=task,
         )
+        if client is None:
+            client, final_model, fallback_label = (
+                _try_configured_fallback_for_unavailable_client(
+                    task,
+                    resolved_provider or "auto",
+                    async_mode=True,
+                )
+            )
+            if client is not None:
+                resolved_provider = fallback_label or resolved_provider
         if client is None:
             _explicit = (resolved_provider or "").strip().lower()
             if _explicit and _explicit not in {"auto", "openrouter", "custom"}:
