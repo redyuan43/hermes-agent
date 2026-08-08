@@ -1,0 +1,149 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1040"
+     role="img" aria-labelledby="title desc">
+  <title id="title">用户、设备和 Agent 关系</title>
+  <desc id="desc">用户 A 通过微信进入 nano2 General，通过 Matrix 直接访问本地专业 Profile。跨设备只能调用 nx2 和 nx3 的 General。</desc>
+  <defs>
+    <marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="8" refY="3"
+            orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#2667a8"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="10" refX="8" refY="3"
+            orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#23815c"/>
+    </marker>
+    <style>
+      text { font-family: Inter, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #1d2733; }
+      .title { font-size: 30px; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #586674; }
+      .section { font-size: 18px; font-weight: 700; }
+      .label { font-size: 14px; font-weight: 600; }
+      .small { font-size: 12px; fill: #586674; }
+      .user { fill: #fff8e7; stroke: #b88413; stroke-width: 1.6; rx: 8; }
+      .device { fill: #f4f8fb; stroke: #2667a8; stroke-width: 2; rx: 8; }
+      .remote { fill: #f4faf7; stroke: #23815c; stroke-width: 2; rx: 8; }
+      .agent { fill: #ffffff; stroke: #aeb8c4; stroke-width: 1.3; rx: 6; }
+      .channel { fill: #f8f9fb; stroke: #7b8998; stroke-width: 1.3; rx: 6; }
+      .local { fill: none; stroke: #2667a8; stroke-width: 2; marker-end: url(#arrowBlue); }
+      .matrix { fill: none; stroke: #7b8998; stroke-width: 1.5; marker-end: url(#arrowBlue); }
+      .federation { fill: none; stroke: #23815c; stroke-width: 3; marker-end: url(#arrowGreen); }
+      .inside { fill: none; stroke: #7b8998; stroke-width: 1.4; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1040" fill="#f7f8fa"/>
+  <text x="52" y="52" class="title">用户、设备和 Agent 关系</text>
+  <text x="52" y="80" class="subtitle">入口属于通道，Agent 属于 Profile，联邦边界只公开每台设备的 General</text>
+
+  <rect x="52" y="116" width="220" height="94" class="user"/>
+  <text x="82" y="154" class="section">用户 A</text>
+  <text x="82" y="182" class="small">拥有 nano2，并通过微信和 Matrix 使用 Agent</text>
+
+  <rect x="52" y="252" width="220" height="94" class="channel"/>
+  <text x="82" y="290" class="section">微信入口</text>
+  <text x="82" y="318" class="small">单一主入口 · 自然语言调度</text>
+
+  <rect x="52" y="392" width="220" height="504" class="channel"/>
+  <text x="82" y="430" class="section">Matrix 入口</text>
+  <text x="82" y="456" class="small">用户直接选择本地专业 Profile</text>
+  <text x="82" y="504" class="label">@general</text>
+  <text x="82" y="554" class="label">@work</text>
+  <text x="82" y="604" class="label">@ceo</text>
+  <text x="82" y="654" class="label">@research</text>
+  <text x="82" y="704" class="label">@tech</text>
+  <text x="82" y="754" class="label">@life</text>
+  <text x="82" y="804" class="label">@invest</text>
+
+  <path d="M162 210 V252" class="local"/>
+
+  <rect x="354" y="116" width="510" height="780" class="device"/>
+  <text x="384" y="154" class="section">nano2 · 用户 A 的设备</text>
+  <text x="384" y="180" class="small">独立 Gateway、配置、SOUL、Skills、记忆和数据</text>
+
+  <rect x="390" y="222" width="438" height="86" class="agent"/>
+  <text x="418" y="258" class="section">default General</text>
+  <text x="418" y="284" class="small">微信主 Agent · 本地调度器 · 唯一联邦出口</text>
+
+  <rect x="390" y="356" width="202" height="70" class="agent"/>
+  <text x="414" y="386" class="label">matrix-general</text>
+  <text x="414" y="408" class="small">@general</text>
+
+  <rect x="626" y="356" width="202" height="70" class="agent"/>
+  <text x="650" y="386" class="label">matrix-work</text>
+  <text x="650" y="408" class="small">@work · local:work</text>
+
+  <rect x="390" y="456" width="202" height="70" class="agent"/>
+  <text x="414" y="486" class="label">matrix-ceo</text>
+  <text x="414" y="508" class="small">@ceo · local:ceo</text>
+
+  <rect x="626" y="456" width="202" height="70" class="agent"/>
+  <text x="650" y="486" class="label">matrix-research</text>
+  <text x="650" y="508" class="small">@research · local:research</text>
+
+  <rect x="390" y="556" width="202" height="70" class="agent"/>
+  <text x="414" y="586" class="label">matrix-tech</text>
+  <text x="414" y="608" class="small">@tech</text>
+
+  <rect x="626" y="556" width="202" height="70" class="agent"/>
+  <text x="650" y="586" class="label">matrix-life</text>
+  <text x="650" y="608" class="small">@life</text>
+
+  <rect x="390" y="656" width="202" height="70" class="agent"/>
+  <text x="414" y="686" class="label">matrix-invest</text>
+  <text x="414" y="708" class="small">@invest</text>
+
+  <rect x="626" y="656" width="202" height="70" fill="#eef5fb" stroke="#7da8ce" rx="6"/>
+  <text x="650" y="686" class="label">设备内部边界</text>
+  <text x="650" y="708" class="small">专业 Agent 不直接对外公开</text>
+
+  <path d="M272 299 H390" class="local"/>
+  <path d="M609 308 C609 330 727 330 727 356" class="local"/>
+  <path d="M609 308 C609 420 491 420 491 456" class="local"/>
+  <path d="M609 308 C609 420 727 420 727 456" class="local"/>
+
+  <path d="M272 494 H390" class="matrix"/>
+  <path d="M272 544 C340 544 540 391 626 391" class="matrix"/>
+  <path d="M272 594 C334 594 344 491 390 491" class="matrix"/>
+  <path d="M272 644 C360 644 544 491 626 491" class="matrix"/>
+  <path d="M272 694 C334 694 344 591 390 591" class="matrix"/>
+  <path d="M272 744 C390 744 550 591 626 591" class="matrix"/>
+  <path d="M272 794 C334 794 344 691 390 691" class="matrix"/>
+
+  <rect x="946" y="116" width="602" height="360" class="remote"/>
+  <text x="976" y="154" class="section">nx2 · 用户 B 的设备</text>
+  <text x="976" y="180" class="small">外部只看到 General，内部结构由 nx2 自主管理</text>
+  <rect x="984" y="216" width="526" height="70" class="agent"/>
+  <text x="1010" y="246" class="section">nx2/general</text>
+  <text x="1010" y="268" class="small">联邦入口 · 审批 · 本地调度 · 结果综合</text>
+  <rect x="984" y="332" width="148" height="62" class="agent"/>
+  <text x="1020" y="370" class="label">Work</text>
+  <rect x="1172" y="332" width="148" height="62" class="agent"/>
+  <text x="1220" y="370" class="label">CEO</text>
+  <rect x="1360" y="332" width="150" height="62" class="agent"/>
+  <text x="1390" y="370" class="label">Research</text>
+  <path d="M1247 286 V310 H1058 V332 M1247 310 V332 M1247 310 H1435 V332" class="inside"/>
+
+  <rect x="946" y="536" width="602" height="360" class="remote"/>
+  <text x="976" y="574" class="section">nx3 · 用户 C 的设备</text>
+  <text x="976" y="600" class="small">外部只看到 General，内部专业 Agent 可以独立变化</text>
+  <rect x="984" y="636" width="526" height="70" class="agent"/>
+  <text x="1010" y="666" class="section">nx3/general</text>
+  <text x="1010" y="688" class="small">联邦入口 · 审批 · 本地调度 · 结果综合</text>
+  <rect x="984" y="752" width="148" height="62" class="agent"/>
+  <text x="1020" y="790" class="label">Work</text>
+  <rect x="1172" y="752" width="148" height="62" class="agent"/>
+  <text x="1220" y="790" class="label">CEO</text>
+  <rect x="1360" y="752" width="150" height="62" class="agent"/>
+  <text x="1390" y="790" class="label">Research</text>
+  <path d="M1247 706 V730 H1058 V752 M1247 730 V752 M1247 730 H1435 V752" class="inside"/>
+
+  <path d="M828 252 C900 252 916 251 984 251" class="federation"/>
+  <text x="868" y="234" class="small">联邦调用</text>
+  <path d="M828 276 C900 500 900 671 984 671" class="federation"/>
+
+  <rect x="354" y="930" width="1194" height="66" fill="#ffffff" stroke="#c7ced6" rx="6"/>
+  <line x1="388" y1="962" x2="438" y2="962" class="local"/>
+  <text x="450" y="967" class="small">本地调用 / 入口映射</text>
+  <line x1="640" y1="962" x2="690" y2="962" class="federation"/>
+  <text x="702" y="967" class="small">跨设备联邦调用（General → General）</text>
+  <text x="1088" y="967" class="small">专业 Agent 始终位于设备内部边界</text>
+</svg>

@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 920"
+     role="img" aria-labelledby="title desc">
+  <title id="title">早期版本的两级联邦授权</title>
+  <desc id="desc">跨设备请求只有 Agent Only 和 Agent Plus Data 两种授权等级。两者都禁止读取凭据、私钥、其他用户和其他 Agent 的数据。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3"
+            orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#2667a8"/>
+    </marker>
+    <style>
+      text { font-family: Inter, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #1d2733; }
+      .title { font-size: 30px; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #586674; }
+      .section { font-size: 20px; font-weight: 700; }
+      .heading { font-size: 15px; font-weight: 700; }
+      .small { font-size: 12px; fill: #586674; }
+      .level1 { fill: #eef8f3; stroke: #70ad91; stroke-width: 1.8; rx: 8; }
+      .level2 { fill: #eef5fb; stroke: #7da8ce; stroke-width: 1.8; rx: 8; }
+      .card { fill: #ffffff; stroke: #bcc6d0; stroke-width: 1.3; rx: 6; }
+      .warning { fill: #fff8e7; stroke: #c8a45a; stroke-width: 1.4; rx: 6; }
+      .deny { fill: #fff1f0; stroke: #d7837d; stroke-width: 1.4; rx: 6; }
+      .choice { fill: #f7f8fa; stroke: #aeb8c4; stroke-width: 1.2; rx: 6; }
+      .line { fill: none; stroke: #2667a8; stroke-width: 2; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="1600" height="920" fill="#f7f8fa"/>
+  <text x="52" y="52" class="title">早期版本的两级联邦授权</text>
+  <text x="52" y="80" class="subtitle">一次审批直接选择权限等级，不引入细粒度数据 Scope</text>
+
+  <rect x="386" y="118" width="828" height="86" class="choice"/>
+  <text x="418" y="150" class="heading">跨设备请求</text>
+  <text x="418" y="178" class="small">用户 A 请求调用用户 B 的 nx2/general 完成一项任务</text>
+
+  <path d="M800 204 V246 H410 V278" class="line"/>
+  <path d="M800 246 H1190 V278" class="line"/>
+
+  <rect x="52" y="278" width="716" height="414" class="level1"/>
+  <text x="84" y="318" class="section">等级 1 · 仅授权 Agent</text>
+  <text x="84" y="346" class="small">授权值：agent_only</text>
+
+  <rect x="84" y="380" width="652" height="112" class="card"/>
+  <text x="108" y="410" class="heading">允许</text>
+  <text x="108" y="436" class="small">执行本次任务、使用模型、公开 Skills、Web/Search 和隔离 Guest 环境</text>
+  <text x="108" y="460" class="small">Federation General 可以调度同样隔离的专业能力实例</text>
+
+  <rect x="84" y="530" width="652" height="126" class="deny"/>
+  <text x="108" y="560" class="heading">不允许</text>
+  <text x="108" y="586" class="small">读取目标 Agent 的私人记忆、历史会话、工作文件和用户资料</text>
+  <text x="108" y="610" class="small">不能进入 Owner General 的私人运行环境</text>
+  <text x="108" y="634" class="small">适合普通协作、公开研究和不需要私人上下文的任务</text>
+
+  <rect x="832" y="278" width="716" height="414" class="level2"/>
+  <text x="864" y="318" class="section">等级 2 · 授权 Agent + 读取 Agent 数据</text>
+  <text x="864" y="346" class="small">授权值：agent_and_data</text>
+
+  <rect x="864" y="380" width="652" height="112" class="card"/>
+  <text x="888" y="410" class="heading">允许</text>
+  <text x="888" y="436" class="small">执行本次任务，并读取被调用 Agent 自己的记忆、会话和工作数据</text>
+  <text x="888" y="460" class="small">可以利用该 Agent 被用户长期调教形成的私人上下文完成回答</text>
+
+  <rect x="864" y="530" width="652" height="126" class="warning"/>
+  <text x="888" y="560" class="heading">仍然存在硬边界</text>
+  <text x="888" y="586" class="small">不能读取 .env、auth.json、Token、私钥和模型凭据</text>
+  <text x="888" y="610" class="small">不能读取其他用户或其他 Agent Profile 的数据</text>
+  <text x="888" y="634" class="small">权限只绑定当前 Context，并沿用 Grant 有效期和撤销机制</text>
+
+  <rect x="52" y="734" width="1496" height="132" class="choice"/>
+  <text x="84" y="770" class="section">目标用户审批时只需要做一个选择</text>
+
+  <rect x="84" y="796" width="416" height="46" class="level1"/>
+  <text x="106" y="825" class="heading">仅同意调用 Agent</text>
+
+  <rect x="592" y="796" width="416" height="46" class="level2"/>
+  <text x="614" y="825" class="heading">同意调用并读取 Agent 数据</text>
+
+  <rect x="1100" y="796" width="416" height="46" class="deny"/>
+  <text x="1122" y="825" class="heading">拒绝</text>
+
+  <text x="52" y="900" class="small">第一版不提供逐文件或逐数据集授权；未来需要更细权限时，再扩展数据 Scope。</text>
+</svg>

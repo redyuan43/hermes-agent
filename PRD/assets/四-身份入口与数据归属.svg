@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 960"
+     role="img" aria-labelledby="title desc">
+  <title id="title">用户、设备、Agent、入口和数据归属</title>
+  <desc id="desc">一个真实用户拥有统一身份和多种消息入口，拥有多台设备；每台设备拥有 General 和专业 Agent；会话与数据归属于 Agent；跨设备只能 General 调用 General。</desc>
+  <defs>
+    <marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="8" refY="3"
+            orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#2667a8"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="10" refX="8" refY="3"
+            orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#23815c"/>
+    </marker>
+    <style>
+      text { font-family: Inter, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #1d2733; }
+      .title { font-size: 30px; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #586674; }
+      .section { font-size: 19px; font-weight: 700; }
+      .heading { font-size: 15px; font-weight: 700; }
+      .small { font-size: 12px; fill: #586674; }
+      .user { fill: #fff8e7; stroke: #b88413; stroke-width: 1.7; rx: 8; }
+      .entry { fill: #f8f9fb; stroke: #7b8998; stroke-width: 1.3; rx: 6; }
+      .device { fill: #f4f8fb; stroke: #2667a8; stroke-width: 2; rx: 8; }
+      .remote { fill: #f4faf7; stroke: #23815c; stroke-width: 2; rx: 8; }
+      .agent { fill: #ffffff; stroke: #aeb8c4; stroke-width: 1.3; rx: 6; }
+      .data { fill: #eef5fb; stroke: #7da8ce; stroke-width: 1.3; rx: 6; }
+      .grant { fill: #eef8f3; stroke: #70ad91; stroke-width: 1.4; rx: 6; }
+      .line { fill: none; stroke: #2667a8; stroke-width: 2; marker-end: url(#arrowBlue); }
+      .fed { fill: none; stroke: #23815c; stroke-width: 3; marker-end: url(#arrowGreen); }
+      .inside { fill: none; stroke: #7b8998; stroke-width: 1.4; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="960" fill="#f7f8fa"/>
+  <text x="52" y="52" class="title">身份、入口与数据归属</text>
+  <text x="52" y="80" class="subtitle">一个用户身份，多种入口；设备拥有 Agent；Agent 拥有会话和数据</text>
+
+  <rect x="52" y="116" width="300" height="118" class="user"/>
+  <text x="82" y="154" class="section">用户 A · user-a</text>
+  <text x="82" y="182" class="small">系统内唯一、稳定的 Canonical User ID</text>
+  <text x="82" y="206" class="small">微信、Matrix 和后台身份都映射到这里</text>
+
+  <rect x="52" y="282" width="300" height="84" class="entry"/>
+  <text x="82" y="316" class="heading">微信身份</text>
+  <text x="82" y="342" class="small">Weixin User ID / Home Channel</text>
+
+  <rect x="52" y="398" width="300" height="84" class="entry"/>
+  <text x="82" y="432" class="heading">Matrix 身份</text>
+  <text x="82" y="458" class="small">@feng + @general 入口</text>
+
+  <rect x="52" y="514" width="300" height="84" class="entry"/>
+  <text x="82" y="548" class="heading">管理后台身份</text>
+  <text x="82" y="574" class="small">Tailscale Identity + Console Account</text>
+
+  <path d="M202 234 V282" class="line"/>
+  <path d="M202 234 C382 260 382 440 352 440" class="line"/>
+  <path d="M202 234 C416 330 416 556 352 556" class="line"/>
+
+  <rect x="430" y="116" width="690" height="718" class="device"/>
+  <text x="462" y="154" class="section">nano2 · 用户 A 的设备</text>
+  <text x="462" y="182" class="small">稳定 Node ID；设备名称可以改变</text>
+
+  <rect x="470" y="228" width="610" height="98" class="agent"/>
+  <text x="500" y="266" class="section">Owner General · agent-general</text>
+  <text x="500" y="292" class="small">微信主入口与 Matrix @general 指向同一个 Agent</text>
+  <text x="500" y="314" class="small">入口会话独立，但共享 SOUL、Skills、长期记忆和用户资料</text>
+
+  <path d="M352 324 H470" class="line"/>
+  <path d="M352 440 C400 440 400 292 470 292" class="line"/>
+  <path d="M352 556 C420 556 420 310 470 310" class="line"/>
+
+  <rect x="470" y="386" width="180" height="76" class="agent"/>
+  <text x="532" y="418" class="heading">Work</text>
+  <text x="500" y="442" class="small">专业 Agent</text>
+
+  <rect x="680" y="386" width="180" height="76" class="agent"/>
+  <text x="748" y="418" class="heading">CEO</text>
+  <text x="710" y="442" class="small">专业 Agent</text>
+
+  <rect x="890" y="386" width="190" height="76" class="agent"/>
+  <text x="940" y="418" class="heading">Research</text>
+  <text x="920" y="442" class="small">专业 Agent</text>
+
+  <path d="M775 326 V356 H560 V386" class="inside"/>
+  <path d="M775 356 V386" class="inside"/>
+  <path d="M775 356 H985 V386" class="inside"/>
+
+  <rect x="470" y="522" width="610" height="126" class="data"/>
+  <text x="500" y="558" class="section">Agent 拥有自己的会话和数据</text>
+  <text x="500" y="586" class="small">SOUL · Skills · 记忆 · 工作文件 · 模型配置 · 历史会话</text>
+  <text x="500" y="612" class="small">完整归属键：user_id + node_id + agent_id</text>
+  <text x="500" y="634" class="small">同名 Agent 位于不同用户或设备时，仍是不同身份</text>
+
+  <rect x="470" y="704" width="280" height="84" class="entry"/>
+  <text x="498" y="738" class="heading">通道会话</text>
+  <text x="498" y="764" class="small">微信 Chat / Matrix Room + Thread</text>
+
+  <rect x="800" y="704" width="280" height="84" class="entry"/>
+  <text x="828" y="738" class="heading">联邦会话</text>
+  <text x="828" y="764" class="small">Context + Task + Client Operation</text>
+
+  <rect x="1186" y="116" width="362" height="438" class="remote"/>
+  <text x="1218" y="154" class="section">用户 B · nx2</text>
+  <text x="1218" y="182" class="small">另一用户、另一设备、独立数据边界</text>
+
+  <rect x="1222" y="228" width="290" height="92" class="agent"/>
+  <text x="1250" y="264" class="section">nx2/general</text>
+  <text x="1250" y="290" class="small">唯一联邦入口</text>
+
+  <rect x="1222" y="380" width="290" height="124" class="grant"/>
+  <text x="1250" y="416" class="heading">Context Grant</text>
+  <text x="1250" y="442" class="small">agent_only</text>
+  <text x="1250" y="466" class="small">或 agent_and_data</text>
+  <text x="1250" y="490" class="small">有效期、撤销和审计</text>
+
+  <path d="M1080 276 H1222" class="fed"/>
+  <text x="1104" y="256" class="small">General → General</text>
+
+  <rect x="1186" y="604" width="362" height="184" class="user"/>
+  <text x="1218" y="642" class="section">核心归属关系</text>
+  <text x="1218" y="678" class="heading">用户拥有设备</text>
+  <text x="1218" y="706" class="heading">设备拥有 Agent</text>
+  <text x="1218" y="734" class="heading">Agent 拥有会话和数据</text>
+  <text x="1218" y="762" class="heading">Grant 连接两个 General</text>
+
+  <rect x="52" y="864" width="1496" height="58" class="grant"/>
+  <text x="82" y="900" class="section">唯一跨设备规则：用户 A / nano2 / General → 用户 B / nx2 / General</text>
+</svg>

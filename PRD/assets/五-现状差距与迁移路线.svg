@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 960"
+     role="img" aria-labelledby="title desc">
+  <title id="title">联邦架构现状差距与迁移路线</title>
+  <desc id="desc">从当前 specialist 直达、双 General Profile 和单级授权，迁移到 General 到 General、统一 Owner General、两级授权和可视化管理后台。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3"
+            orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#2667a8"/>
+    </marker>
+    <style>
+      text { font-family: Inter, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #1d2733; }
+      .title { font-size: 30px; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #586674; }
+      .section { font-size: 19px; font-weight: 700; }
+      .heading { font-size: 15px; font-weight: 700; }
+      .small { font-size: 12px; fill: #586674; }
+      .current { fill: #fff1f0; stroke: #d7837d; stroke-width: 1.7; rx: 8; }
+      .target { fill: #eef8f3; stroke: #70ad91; stroke-width: 1.7; rx: 8; }
+      .phase { fill: #ffffff; stroke: #aeb8c4; stroke-width: 1.3; rx: 6; }
+      .phaseActive { fill: #eef5fb; stroke: #7da8ce; stroke-width: 1.5; rx: 6; }
+      .later { fill: #f7f8fa; stroke: #bcc6d0; stroke-width: 1.2; rx: 6; }
+      .line { fill: none; stroke: #2667a8; stroke-width: 2; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="1600" height="960" fill="#f7f8fa"/>
+  <text x="52" y="52" class="title">现状差距与迁移路线</text>
+  <text x="52" y="80" class="subtitle">先建立兼容能力，再切换调用路径，最后清理旧配置；任何阶段都保留回滚点</text>
+
+  <rect x="52" y="122" width="716" height="280" class="current"/>
+  <text x="84" y="162" class="section">当前实现</text>
+  <text x="84" y="202" class="heading">联邦路由</text>
+  <text x="238" y="202" class="small">nano2 可以直接调用 nx2/research</text>
+  <text x="84" y="238" class="heading">远端节点</text>
+  <text x="238" y="238" class="small">nx2 / nx3 尚无完整 Federation General 内部编排</text>
+  <text x="84" y="274" class="heading">入口身份</text>
+  <text x="238" y="274" class="small">微信 default 与 Matrix matrix-general 是两个 Profile</text>
+  <text x="84" y="310" class="heading">授权等级</text>
+  <text x="238" y="310" class="small">当前接近 agent_only，Grant 尚无 authorization_level</text>
+  <text x="84" y="346" class="heading">管理能力</text>
+  <text x="238" y="346" class="small">Control Plane 依赖 CLI，没有 Federation Console</text>
+
+  <rect x="832" y="122" width="716" height="280" class="target"/>
+  <text x="864" y="162" class="section">目标架构</text>
+  <text x="864" y="202" class="heading">联邦路由</text>
+  <text x="1018" y="202" class="small">所有跨设备调用统一为 General → General</text>
+  <text x="864" y="238" class="heading">远端节点</text>
+  <text x="1018" y="238" class="small">Federation General 自主调度本机专业 Agent</text>
+  <text x="864" y="274" class="heading">入口身份</text>
+  <text x="1018" y="274" class="small">微信与 Matrix @general 指向同一 Owner General</text>
+  <text x="864" y="310" class="heading">授权等级</text>
+  <text x="1018" y="310" class="small">agent_only / agent_and_data 两级 Grant</text>
+  <text x="864" y="346" class="heading">管理能力</text>
+  <text x="1018" y="346" class="small">AI 上运行可视化 Console、诊断和审计</text>
+
+  <path d="M768 262 H832" class="line"/>
+
+  <text x="52" y="464" class="section">推荐迁移顺序</text>
+
+  <rect x="52" y="500" width="280" height="154" class="phaseActive"/>
+  <text x="78" y="536" class="heading">阶段 0 · 兼容基础</text>
+  <text x="78" y="566" class="small">增加新字段和双读兼容</text>
+  <text x="78" y="590" class="small">备份数据库与配置</text>
+  <text x="78" y="614" class="small">建立自动回滚检查</text>
+
+  <rect x="356" y="500" width="280" height="154" class="phase"/>
+  <text x="382" y="536" class="heading">阶段 1 · General 边界</text>
+  <text x="382" y="566" class="small">nx2 / nx3 增加内部编排</text>
+  <text x="382" y="590" class="small">先验证 General 新路径</text>
+  <text x="382" y="614" class="small">暂时保留旧路径回滚</text>
+
+  <rect x="660" y="500" width="280" height="154" class="phase"/>
+  <text x="686" y="536" class="heading">阶段 2 · 两级授权</text>
+  <text x="686" y="566" class="small">Grant 增加 authorization_level</text>
+  <text x="686" y="590" class="small">实现 agent_and_data 安全读取</text>
+  <text x="686" y="614" class="small">更新微信 / Matrix 审批</text>
+
+  <rect x="964" y="500" width="280" height="154" class="phase"/>
+  <text x="990" y="536" class="heading">阶段 3 · 入口统一</text>
+  <text x="990" y="566" class="small">建立 Canonical User ID</text>
+  <text x="990" y="590" class="small">合并 default 与 @general</text>
+  <text x="990" y="614" class="small">保留各通道独立会话</text>
+
+  <rect x="1268" y="500" width="280" height="154" class="phase"/>
+  <text x="1294" y="536" class="heading">阶段 4 · 管理后台</text>
+  <text x="1294" y="566" class="small">Admin API 与 RBAC</text>
+  <text x="1294" y="590" class="small">拓扑、诊断、影响预演</text>
+  <text x="1294" y="614" class="small">审计和敏感访问保护</text>
+
+  <path d="M332 577 H356" class="line"/>
+  <path d="M636 577 H660" class="line"/>
+  <path d="M940 577 H964" class="line"/>
+  <path d="M1244 577 H1268" class="line"/>
+
+  <rect x="52" y="710" width="920" height="180" class="target"/>
+  <text x="82" y="748" class="section">每个阶段必须通过的发布门槛</text>
+  <text x="82" y="784" class="heading">兼容</text>
+  <text x="218" y="784" class="small">旧配置可读、数据库可迁移、旧节点不会因新字段崩溃</text>
+  <text x="82" y="818" class="heading">安全</text>
+  <text x="218" y="818" class="small">审批不可绕过、凭据不泄露、幂等和租约不退化</text>
+  <text x="82" y="852" class="heading">运行</text>
+  <text x="218" y="852" class="small">三机服务健康、可回滚、日志和审计能解释失败原因</text>
+
+  <rect x="1008" y="710" width="540" height="180" class="later"/>
+  <text x="1038" y="748" class="section">后续版本，不阻塞早期上线</text>
+  <text x="1038" y="784" class="small">单设备四租户和虚拟机编排</text>
+  <text x="1038" y="816" class="small">细粒度数据 Scope</text>
+  <text x="1038" y="848" class="small">Control Plane 高可用与去中心化增强</text>
+
+  <text x="52" y="934" class="small">切换原则：先部署目标能力，验证通过后再删除旧 specialist 直达关系和旧 Profile。</text>
+</svg>

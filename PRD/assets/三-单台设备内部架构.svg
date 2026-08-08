@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 940"
+     role="img" aria-labelledby="title desc">
+  <title id="title">单台设备内部架构</title>
+  <desc id="desc">一台物理设备包含用户隔离层、Hermes Gateway、Owner General、Federation General、本地专业 Agent、Node Agent 和本地数据。</desc>
+  <defs>
+    <marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="8" refY="3"
+            orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#2667a8"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="10" refX="8" refY="3"
+            orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#23815c"/>
+    </marker>
+    <style>
+      text { font-family: Inter, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #1d2733; }
+      .title { font-size: 30px; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #586674; }
+      .section { font-size: 18px; font-weight: 700; }
+      .label { font-size: 14px; font-weight: 600; }
+      .small { font-size: 12px; fill: #586674; }
+      .device { fill: #f4f8fb; stroke: #2667a8; stroke-width: 2; rx: 8; }
+      .tenant { fill: #fff8e7; stroke: #b88413; stroke-width: 1.5; rx: 6; }
+      .service { fill: #ffffff; stroke: #aeb8c4; stroke-width: 1.4; rx: 6; }
+      .owner { fill: #eef5fb; stroke: #7da8ce; stroke-width: 1.5; rx: 6; }
+      .federation { fill: #eef8f3; stroke: #70ad91; stroke-width: 1.5; rx: 6; }
+      .data { fill: #fffaf0; stroke: #c8a45a; stroke-width: 1.4; rx: 6; }
+      .entry { fill: #f8f9fb; stroke: #7b8998; stroke-width: 1.4; rx: 6; }
+      .localLine { fill: none; stroke: #2667a8; stroke-width: 2; marker-end: url(#arrowBlue); }
+      .fedLine { fill: none; stroke: #23815c; stroke-width: 2.5; marker-end: url(#arrowGreen); }
+      .manage { fill: none; stroke: #6f7d8a; stroke-width: 1.5; stroke-dasharray: 7 5; marker-end: url(#arrowBlue); }
+    </style>
+  </defs>
+
+  <rect width="1500" height="940" fill="#f7f8fa"/>
+  <text x="52" y="52" class="title">单台设备内部架构</text>
+  <text x="52" y="80" class="subtitle">Owner General 服务设备所有者；Federation General 是唯一跨设备入口</text>
+
+  <rect x="52" y="132" width="230" height="110" class="entry"/>
+  <text x="82" y="170" class="section">设备所有者</text>
+  <text x="82" y="198" class="small">微信 / Matrix / Dashboard</text>
+  <text x="82" y="220" class="small">使用私人 Agent、记忆和数据</text>
+
+  <rect x="52" y="304" width="230" height="110" class="entry"/>
+  <text x="82" y="342" class="section">其他物理设备</text>
+  <text x="82" y="370" class="small">General → General</text>
+  <text x="82" y="392" class="small">签名、关系、能力和审批</text>
+
+  <rect x="340" y="108" width="1108" height="762" class="device"/>
+  <text x="374" y="148" class="section">物理设备 · 用户 / 租户隔离边界</text>
+
+  <rect x="374" y="174" width="1040" height="62" class="tenant"/>
+  <text x="400" y="202" class="label">Linux 用户 / 容器 / 虚拟机 + 独立 HERMES_HOME</text>
+  <text x="400" y="222" class="small">配置、密钥、模型凭据、文件权限和进程归属均位于租户边界内</text>
+
+  <rect x="374" y="270" width="1040" height="86" class="service"/>
+  <text x="402" y="304" class="section">Hermes Gateway</text>
+  <text x="402" y="330" class="small">微信、Matrix、Dashboard、A2A 接入；会话路由；Profile Multiplex；插件加载</text>
+
+  <rect x="374" y="402" width="484" height="126" class="owner"/>
+  <text x="402" y="438" class="section">Owner General</text>
+  <text x="402" y="466" class="small">设备所有者的私人主 Agent</text>
+  <text x="402" y="488" class="small">可使用用户 SOUL、Skills、记忆、文件和私人数据</text>
+  <text x="402" y="510" class="small">自主调度本机专业 Agent</text>
+
+  <rect x="930" y="402" width="484" height="126" class="federation"/>
+  <text x="958" y="438" class="section">Federation General</text>
+  <text x="958" y="466" class="small">设备唯一对外联邦入口</text>
+  <text x="958" y="488" class="small">执行关系、签名、能力、审批和数据范围检查</text>
+  <text x="958" y="510" class="small">不默认继承 Owner General 的私人上下文</text>
+
+  <rect x="374" y="580" width="220" height="84" class="service"/>
+  <text x="438" y="616" class="label">Work</text>
+  <text x="410" y="642" class="small">本地专业 Profile</text>
+
+  <rect x="620" y="580" width="220" height="84" class="service"/>
+  <text x="698" y="616" class="label">CEO</text>
+  <text x="656" y="642" class="small">本地专业 Profile</text>
+
+  <rect x="866" y="580" width="220" height="84" class="service"/>
+  <text x="928" y="616" class="label">Research</text>
+  <text x="902" y="642" class="small">本地专业 Profile</text>
+
+  <rect x="1112" y="580" width="302" height="84" class="service"/>
+  <text x="1140" y="614" class="label">其他本地 Agent</text>
+  <text x="1140" y="640" class="small">Tech、Life、Invest 或未来能力</text>
+
+  <rect x="374" y="718" width="420" height="108" class="data"/>
+  <text x="402" y="752" class="section">本地数据与密钥</text>
+  <text x="402" y="778" class="small">state.db · grants.db · orchestration.db</text>
+  <text x="402" y="800" class="small">receipts · certificates · encryption keys</text>
+
+  <rect x="842" y="718" width="572" height="108" class="service"/>
+  <text x="870" y="752" class="section">Federation Node Agent</text>
+  <text x="870" y="778" class="small">设备身份、证书、Manifest、关系同步、任务断言、健康状态</text>
+  <text x="870" y="800" class="small">与 AI Control Plane 连接，但不转发模型任务</text>
+
+  <path d="M282 187 H340 C356 187 356 313 374 313" class="localLine"/>
+  <path d="M282 359 H320 C342 359 342 313 374 313" class="fedLine"/>
+  <path d="M616 356 V402" class="localLine"/>
+  <path d="M1172 356 V402" class="fedLine"/>
+  <path d="M616 528 V552 H484 V580" class="localLine"/>
+  <path d="M616 552 H730 V580" class="localLine"/>
+  <path d="M1172 528 V552 H976 V580" class="fedLine"/>
+  <path d="M1172 552 H1263 V580" class="fedLine"/>
+  <path d="M584 664 V718" class="manage"/>
+  <path d="M1128 718 V664" class="manage"/>
+
+  <rect x="52" y="876" width="1396" height="44" fill="#ffffff" stroke="#c7ced6" rx="6"/>
+  <line x1="86" y1="898" x2="132" y2="898" class="localLine"/>
+  <text x="144" y="903" class="small">所有者入口与本地调用</text>
+  <line x1="380" y1="898" x2="426" y2="898" class="fedLine"/>
+  <text x="438" y="903" class="small">跨设备联邦调用</text>
+  <line x1="666" y1="898" x2="712" y2="898" class="manage"/>
+  <text x="724" y="903" class="small">管理、持久化与身份同步</text>
+</svg>

@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 820"
+     role="img" aria-labelledby="title desc">
+  <title id="title">General 联邦边界</title>
+  <desc id="desc">nano2 General 只能调用 nx2 General。nx2 General 在审批和策略检查后调用本机 Research。直接调用 nx2 Research 的路径被禁止。</desc>
+  <defs>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="10" refX="8" refY="3"
+            orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#23815c"/>
+    </marker>
+    <marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="8" refY="3"
+            orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#2667a8"/>
+    </marker>
+    <style>
+      text { font-family: Inter, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #1d2733; }
+      .title { font-size: 30px; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #586674; }
+      .section { font-size: 18px; font-weight: 700; }
+      .label { font-size: 14px; font-weight: 600; }
+      .small { font-size: 12px; fill: #586674; }
+      .deviceA { fill: #f4f8fb; stroke: #2667a8; stroke-width: 2; rx: 8; }
+      .deviceB { fill: #f4faf7; stroke: #23815c; stroke-width: 2; rx: 8; }
+      .agent { fill: #ffffff; stroke: #aeb8c4; stroke-width: 1.4; rx: 6; }
+      .gate { fill: #fff8e7; stroke: #b88413; stroke-width: 1.4; rx: 6; }
+      .allowed { fill: none; stroke: #23815c; stroke-width: 3; marker-end: url(#arrowGreen); }
+      .internal { fill: none; stroke: #2667a8; stroke-width: 2; marker-end: url(#arrowBlue); }
+      .blocked { fill: none; stroke: #b84945; stroke-width: 3; stroke-dasharray: 8 6; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="820" fill="#f7f8fa"/>
+  <text x="52" y="52" class="title">General 联邦边界</text>
+  <text x="52" y="80" class="subtitle">跨设备只暴露 General；专业 Agent 是目标设备内部实现</text>
+
+  <rect x="56" y="130" width="472" height="570" class="deviceA"/>
+  <text x="86" y="170" class="section">nano2 · 用户 A</text>
+  <text x="86" y="196" class="small">调用方设备</text>
+
+  <rect x="96" y="246" width="392" height="100" class="agent"/>
+  <text x="126" y="282" class="section">nano2/general</text>
+  <text x="126" y="308" class="small">理解用户任务，决定是否发起跨设备协作</text>
+  <text x="126" y="328" class="small">只能选择远端设备的 General</text>
+
+  <rect x="96" y="420" width="392" height="112" class="gate"/>
+  <text x="126" y="456" class="label">联邦调用请求</text>
+  <text x="126" y="482" class="small">目标：nx2/general</text>
+  <text x="126" y="504" class="small">业务能力：research</text>
+
+  <rect x="606" y="130" width="778" height="570" class="deviceB"/>
+  <text x="636" y="170" class="section">nx2 · 用户 B</text>
+  <text x="636" y="196" class="small">目标设备拥有完整的内部自治权</text>
+
+  <rect x="650" y="238" width="690" height="106" class="agent"/>
+  <text x="682" y="276" class="section">nx2/general</text>
+  <text x="682" y="302" class="small">唯一联邦入口 · 识别调用方 · 执行策略 · 决定内部路由</text>
+  <text x="682" y="324" class="small">外部调用方无法指定 nx2 的内部专业 Agent</text>
+
+  <rect x="650" y="384" width="690" height="82" class="gate"/>
+  <text x="682" y="416" class="label">目标用户审批与安全策略</text>
+  <text x="682" y="442" class="small">关系、签名、ACL、Capability、Context、用户同意</text>
+
+  <rect x="650" y="520" width="188" height="82" class="agent"/>
+  <text x="708" y="554" class="label">Work</text>
+  <text x="690" y="580" class="small">设备内部 Agent</text>
+
+  <rect x="900" y="520" width="188" height="82" class="agent"/>
+  <text x="968" y="554" class="label">CEO</text>
+  <text x="940" y="580" class="small">设备内部 Agent</text>
+
+  <rect x="1152" y="520" width="188" height="82" class="agent"/>
+  <text x="1200" y="554" class="label">Research</text>
+  <text x="1192" y="580" class="small">设备内部 Agent</text>
+
+  <path d="M488 476 H650" class="allowed"/>
+  <text x="520" y="456" class="small">允许：General → General</text>
+
+  <path d="M995 344 V384" class="internal"/>
+  <path d="M995 466 V492 H744 V520" class="internal"/>
+  <path d="M995 466 V520" class="internal"/>
+  <path d="M995 492 H1246 V520" class="internal"/>
+
+  <path d="M292 346 C350 740 980 740 1246 602" class="blocked"/>
+  <line x1="812" y1="682" x2="842" y2="712" stroke="#b84945" stroke-width="5"/>
+  <line x1="842" y1="682" x2="812" y2="712" stroke="#b84945" stroke-width="5"/>
+  <rect x="56" y="728" width="472" height="54" fill="#eef8f3" stroke="#70ad91" rx="6"/>
+  <text x="82" y="760" class="label">稳定外部契约：nx2/general</text>
+
+  <rect x="548" y="728" width="300" height="54" fill="#fff1f0" stroke="#d7837d" rx="6"/>
+  <text x="570" y="760" class="label" fill="#b84945">禁止直达：nx2/research</text>
+
+  <rect x="868" y="728" width="516" height="54" fill="#eef5fb" stroke="#7da8ce" rx="6"/>
+  <text x="890" y="760" class="label">可变内部实现：专业 Agent、模型、Skills 和数据策略</text>
+</svg>

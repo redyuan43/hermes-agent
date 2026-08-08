@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1680 1080"
+     role="img" aria-labelledby="title desc">
+  <title id="title">General 到 General 的跨设备调用流程</title>
+  <desc id="desc">用户 A 的请求从 nano2 Owner General 发出，经签名和关系验证进入 nx2 Federation General，用户 B 审批后由 nx2 内部 Agent 执行并返回结果。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3"
+            orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#2667a8"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="10" refX="8" refY="3"
+            orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#23815c"/>
+    </marker>
+    <style>
+      text { font-family: Inter, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #1d2733; }
+      .title { font-size: 30px; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #586674; }
+      .lane { fill: #ffffff; stroke: #b8c2cc; stroke-width: 1.3; rx: 6; }
+      .laneHeadA { fill: #eef5fb; stroke: #7da8ce; rx: 6; }
+      .laneHeadB { fill: #eef8f3; stroke: #70ad91; rx: 6; }
+      .laneHeadUser { fill: #fff8e7; stroke: #c8a45a; rx: 6; }
+      .heading { font-size: 15px; font-weight: 700; }
+      .small { font-size: 12px; fill: #586674; }
+      .stepA { fill: #eef5fb; stroke: #7da8ce; rx: 6; }
+      .stepB { fill: #eef8f3; stroke: #70ad91; rx: 6; }
+      .approval { fill: #fff8e7; stroke: #c8a45a; rx: 6; }
+      .terminal { fill: #f7f8fa; stroke: #aeb8c4; rx: 6; }
+      .line { fill: none; stroke: #2667a8; stroke-width: 2; marker-end: url(#arrow); }
+      .lineGreen { fill: none; stroke: #23815c; stroke-width: 2.5; marker-end: url(#arrowGreen); }
+      .return { fill: none; stroke: #23815c; stroke-width: 2; stroke-dasharray: 8 5; marker-end: url(#arrowGreen); }
+    </style>
+  </defs>
+
+  <rect width="1680" height="1080" fill="#f7f8fa"/>
+  <text x="48" y="50" class="title">General → General 跨设备调用流程</text>
+  <text x="48" y="78" class="subtitle">持久化意图、签名断言、目标用户审批、内部调度、租约执行和精确恢复</text>
+
+  <rect x="48" y="112" width="210" height="900" class="lane"/>
+  <rect x="48" y="112" width="210" height="64" class="laneHeadUser"/>
+  <text x="82" y="150" class="heading">用户 A</text>
+
+  <rect x="278" y="112" width="250" height="900" class="lane"/>
+  <rect x="278" y="112" width="250" height="64" class="laneHeadA"/>
+  <text x="308" y="150" class="heading">nano2 Owner General</text>
+
+  <rect x="548" y="112" width="250" height="900" class="lane"/>
+  <rect x="548" y="112" width="250" height="64" class="laneHeadA"/>
+  <text x="578" y="150" class="heading">nano2 Node Agent</text>
+
+  <rect x="818" y="112" width="280" height="900" class="lane"/>
+  <rect x="818" y="112" width="280" height="64" class="laneHeadB"/>
+  <text x="848" y="150" class="heading">nx2 Federation General</text>
+
+  <rect x="1118" y="112" width="210" height="900" class="lane"/>
+  <rect x="1118" y="112" width="210" height="64" class="laneHeadUser"/>
+  <text x="1152" y="150" class="heading">用户 B 审批入口</text>
+
+  <rect x="1348" y="112" width="284" height="900" class="lane"/>
+  <rect x="1348" y="112" width="284" height="64" class="laneHeadB"/>
+  <text x="1378" y="150" class="heading">nx2 内部 Agent</text>
+
+  <rect x="72" y="220" width="162" height="64" class="approval"/>
+  <text x="88" y="246" class="heading">1. 提交任务</text>
+  <text x="88" y="268" class="small">自然语言请求</text>
+
+  <rect x="302" y="220" width="202" height="84" class="stepA"/>
+  <text x="318" y="246" class="heading">2. 判断跨设备协作</text>
+  <text x="318" y="268" class="small">目标只能是 nx2/general</text>
+  <text x="318" y="288" class="small">生成 conversation</text>
+
+  <rect x="302" y="348" width="202" height="84" class="stepA"/>
+  <text x="318" y="374" class="heading">3. 持久化调用意图</text>
+  <text x="318" y="396" class="small">加密正文与 Context</text>
+  <text x="318" y="416" class="small">固定 Client Operation ID</text>
+
+  <rect x="572" y="348" width="202" height="84" class="stepA"/>
+  <text x="588" y="374" class="heading">4. 签发任务断言</text>
+  <text x="588" y="396" class="small">关系、身份、Capability</text>
+  <text x="588" y="416" class="small">一次性 Nonce 与有效期</text>
+
+  <rect x="842" y="348" width="232" height="104" class="stepB"/>
+  <text x="858" y="374" class="heading">5. 目标验证并落库</text>
+  <text x="858" y="396" class="small">传输、签名、ACL、关系</text>
+  <text x="858" y="416" class="small">幂等创建加密 Operation</text>
+  <text x="858" y="436" class="small">拒绝 specialist 直达</text>
+
+  <rect x="842" y="496" width="232" height="84" class="approval"/>
+  <text x="858" y="522" class="heading">6. auth-required</text>
+  <text x="858" y="544" class="small">创建审批请求</text>
+  <text x="858" y="564" class="small">任务尚未执行</text>
+
+  <rect x="1142" y="496" width="162" height="104" class="approval"/>
+  <text x="1158" y="522" class="heading">7. 用户 B 决策</text>
+  <text x="1158" y="544" class="small">微信 / 授权 Matrix</text>
+  <text x="1158" y="566" class="small">同意或拒绝</text>
+  <text x="1158" y="586" class="small">不能由 AI 后台代批</text>
+
+  <rect x="842" y="636" width="232" height="104" class="stepB"/>
+  <text x="858" y="662" class="heading">8. Durable Queue</text>
+  <text x="858" y="684" class="small">Worker 获取执行租约</text>
+  <text x="858" y="704" class="small">运行期间周期续约</text>
+  <text x="858" y="724" class="small">崩溃后可恢复</text>
+
+  <rect x="1372" y="636" width="236" height="104" class="stepB"/>
+  <text x="1388" y="662" class="heading">9. 内部自主调度</text>
+  <text x="1388" y="684" class="small">选择 Work / CEO / Research</text>
+  <text x="1388" y="704" class="small">执行允许的数据和 Skills</text>
+  <text x="1388" y="724" class="small">结果交还 General 综合</text>
+
+  <rect x="842" y="786" width="232" height="84" class="stepB"/>
+  <text x="858" y="812" class="heading">10. 保存终态结果</text>
+  <text x="858" y="834" class="small">completed / failed / rejected</text>
+  <text x="858" y="854" class="small">加密持久化并释放租约</text>
+
+  <rect x="302" y="786" width="202" height="104" class="stepA"/>
+  <text x="318" y="812" class="heading">11. 精确恢复</text>
+  <text x="318" y="834" class="small">使用原 Context GetTask</text>
+  <text x="318" y="854" class="small">不重新发送原任务</text>
+  <text x="318" y="874" class="small">不误吞用户新消息</text>
+
+  <rect x="72" y="922" width="162" height="62" class="terminal"/>
+  <text x="88" y="948" class="heading">12. 最终回复</text>
+  <text x="88" y="970" class="small">源端 General 综合</text>
+
+  <path d="M234 252 H302" class="line"/>
+  <path d="M403 304 V348" class="line"/>
+  <path d="M504 390 H572" class="line"/>
+  <path d="M774 390 H842" class="lineGreen"/>
+  <path d="M958 452 V496" class="lineGreen"/>
+  <path d="M1074 538 H1142" class="line"/>
+  <path d="M1223 600 V618 H958 V636" class="lineGreen"/>
+  <path d="M1074 688 H1372" class="lineGreen"/>
+  <path d="M1490 740 V766 H958 V786" class="return"/>
+  <path d="M842 828 H504" class="return"/>
+  <path d="M403 890 V953 H234" class="return"/>
+
+  <rect x="548" y="920" width="1084" height="64" class="terminal"/>
+  <text x="574" y="946" class="heading">核心保证</text>
+  <text x="574" y="968" class="small">同一操作不重复执行 · 审批前不运行 · 外部不能指定内部 Agent · 服务重启后可恢复 · 终态可审计</text>
+</svg>
