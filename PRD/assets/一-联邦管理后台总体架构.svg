@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 860"
+     role="img" aria-labelledby="title desc">
+  <title id="title">联邦管理后台总体架构</title>
+  <desc id="desc">管理员通过 Tailscale HTTPS 访问 AI 服务器上的联邦管理后台。控制平面管理三台设备，任务数据仍在设备之间点对点传输。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3"
+            orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#2667a8"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="10" refX="8" refY="3"
+            orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#23815c"/>
+    </marker>
+    <style>
+      text { font-family: Inter, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #1d2733; }
+      .title { font-size: 30px; font-weight: 700; }
+      .subtitle { font-size: 16px; fill: #536170; }
+      .section { font-size: 18px; font-weight: 700; }
+      .label { font-size: 15px; font-weight: 600; }
+      .small { font-size: 13px; fill: #536170; }
+      .card { fill: #ffffff; stroke: #aeb8c4; stroke-width: 1.5; rx: 8; }
+      .ai { fill: #f3f7fb; stroke: #2667a8; stroke-width: 2; rx: 8; }
+      .node { fill: #f8fbf8; stroke: #23815c; stroke-width: 1.5; rx: 8; }
+      .db { fill: #fff8e7; stroke: #b88413; stroke-width: 1.4; rx: 6; }
+      .management { fill: none; stroke: #2667a8; stroke-width: 2; stroke-dasharray: 8 6; marker-end: url(#arrow); }
+      .data { fill: none; stroke: #23815c; stroke-width: 3; marker-end: url(#arrowGreen); }
+      .internal { fill: none; stroke: #7a8794; stroke-width: 1.5; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="860" fill="#f7f8fa"/>
+  <text x="52" y="52" class="title">联邦管理后台总体架构</text>
+  <text x="52" y="82" class="subtitle">管理平面集中可视化，任务数据保持设备间点对点传输</text>
+
+  <rect x="52" y="122" width="245" height="106" class="card"/>
+  <text x="76" y="157" class="section">管理员 / 普通用户</text>
+  <text x="76" y="185" class="small">浏览器访问</text>
+  <text x="76" y="207" class="small">Tailscale 身份 + 应用 RBAC</text>
+
+  <path d="M297 175 H430" class="management"/>
+  <text x="318" y="156" class="small">Tailscale HTTPS</text>
+
+  <rect x="430" y="106" width="958" height="410" class="ai"/>
+  <text x="458" y="142" class="section">AI 服务器 · Federation Management Plane</text>
+
+  <rect x="466" y="170" width="886" height="72" class="card"/>
+  <text x="494" y="200" class="label">Federation Console Web UI</text>
+  <text x="494" y="224" class="small">总览 · 拓扑 · 用户 · 设备 · Agent · 关系 · 运行记录 · 审计</text>
+
+  <path d="M909 242 V274" class="internal"/>
+  <text x="924" y="263" class="small">Admin API</text>
+
+  <rect x="466" y="274" width="886" height="92" class="card"/>
+  <text x="494" y="306" class="label">Federation Control Plane</text>
+  <text x="494" y="332" class="small">设备注册 · 证书 · Manifest · General 间关系 · Capability · 同步序列</text>
+  <text x="494" y="352" class="small">不转发模型请求，不替目标用户审批业务任务</text>
+
+  <path d="M720 366 V398" class="internal"/>
+  <path d="M1098 366 V398" class="internal"/>
+
+  <rect x="520" y="398" width="400" height="78" class="db"/>
+  <text x="548" y="430" class="label">Control Database</text>
+  <text x="548" y="454" class="small">节点、证书、Manifest、关系和同步版本</text>
+
+  <rect x="974" y="398" width="326" height="78" class="db"/>
+  <text x="1002" y="430" class="label">Audit Database</text>
+  <text x="1002" y="454" class="small">操作者、原因、变更前后和敏感访问记录</text>
+
+  <text x="52" y="570" class="section">物理设备与运行平面</text>
+
+  <rect x="70" y="608" width="360" height="174" class="node"/>
+  <text x="96" y="642" class="section">nano2 · 用户 A</text>
+  <rect x="96" y="660" width="308" height="42" class="card"/>
+  <text x="116" y="686" class="label">Federation Node Agent</text>
+  <rect x="96" y="716" width="308" height="42" class="card"/>
+  <text x="116" y="742" class="label">Hermes Gateway / General</text>
+
+  <rect x="540" y="608" width="360" height="174" class="node"/>
+  <text x="566" y="642" class="section">nx2 · 用户 B</text>
+  <rect x="566" y="660" width="308" height="42" class="card"/>
+  <text x="586" y="686" class="label">Federation Node Agent</text>
+  <rect x="566" y="716" width="308" height="42" class="card"/>
+  <text x="586" y="742" class="label">Hermes Gateway / General</text>
+
+  <rect x="1010" y="608" width="360" height="174" class="node"/>
+  <text x="1036" y="642" class="section">nx3 · 用户 C</text>
+  <rect x="1036" y="660" width="308" height="42" class="card"/>
+  <text x="1056" y="686" class="label">Federation Node Agent</text>
+  <rect x="1036" y="716" width="308" height="42" class="card"/>
+  <text x="1056" y="742" class="label">Hermes Gateway / General</text>
+
+  <path d="M650 516 C600 555 360 555 250 660" class="management"/>
+  <path d="M900 516 C900 555 760 555 720 660" class="management"/>
+  <path d="M1150 516 C1190 555 1190 572 1190 660" class="management"/>
+
+  <path d="M404 737 C460 805 510 805 566 737" class="data"/>
+  <path d="M404 748 C620 838 920 838 1036 748" class="data"/>
+  <text x="604" y="824" class="small">任务数据平面 · Tailscale 点对点 A2A</text>
+
+  <line x1="52" y1="844" x2="92" y2="844" class="management"/>
+  <text x="102" y="849" class="small">管理、注册与同步</text>
+  <line x1="282" y1="844" x2="322" y2="844" class="data"/>
+  <text x="332" y="849" class="small">任务调用</text>
+</svg>

@@ -1,0 +1,158 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900"
+     role="img" aria-labelledby="title desc">
+  <title id="title">Federation Console 总览页面线框图</title>
+  <desc id="desc">联邦管理后台的桌面端总览页面，包含导航、统计、联邦拓扑、告警、最近变更和节点状态。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3"
+            orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#2667a8"/>
+    </marker>
+    <style>
+      text { font-family: Inter, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill: #1d2733; }
+      .title { font-size: 25px; font-weight: 700; }
+      .heading { font-size: 18px; font-weight: 700; }
+      .label { font-size: 14px; font-weight: 600; }
+      .small { font-size: 12px; fill: #5d6875; }
+      .navTitle { fill: #ffffff; }
+      .navLabel { fill: #d6dde4; }
+      .navActive { fill: #ffffff; }
+      .navMuted { fill: #b8c3cd; }
+      .shell { fill: #ffffff; stroke: #aeb8c4; stroke-width: 1.5; rx: 8; }
+      .panel { fill: #ffffff; stroke: #c7ced6; stroke-width: 1.2; rx: 6; }
+      .nav { fill: #24313d; }
+      .active { fill: #345f87; rx: 4; }
+      .metricBlue { fill: #eef5fb; stroke: #7da8ce; rx: 6; }
+      .metricGreen { fill: #eef8f3; stroke: #70ad91; rx: 6; }
+      .metricAmber { fill: #fff8e7; stroke: #d0a147; rx: 6; }
+      .metricRed { fill: #fff1f0; stroke: #d7837d; rx: 6; }
+      .node { fill: #f7fafc; stroke: #7b8998; rx: 5; }
+      .edge { fill: none; stroke: #2667a8; stroke-width: 2; marker-end: url(#arrow); }
+      .internal { fill: none; stroke: #82909d; stroke-width: 1.4; }
+      .ok { fill: #23815c; }
+      .warn { fill: #b88413; }
+      .bad { fill: #b84945; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="900" fill="#f2f4f6"/>
+  <rect x="30" y="28" width="1380" height="844" class="shell"/>
+
+  <rect x="30" y="28" width="224" height="844" class="nav"/>
+  <text x="58" y="72" class="title navTitle">Federation</text>
+  <text x="58" y="96" class="small navMuted">Management Console</text>
+
+  <rect x="46" y="126" width="192" height="40" class="active"/>
+  <text x="70" y="151" class="label navActive">总览</text>
+  <text x="70" y="198" class="label navLabel">拓扑</text>
+  <text x="70" y="242" class="label navLabel">用户</text>
+  <text x="70" y="286" class="label navLabel">设备</text>
+  <text x="70" y="330" class="label navLabel">Agent</text>
+  <text x="70" y="374" class="label navLabel">关系</text>
+  <text x="70" y="418" class="label navLabel">运行记录</text>
+  <text x="70" y="462" class="label navLabel">审计</text>
+  <text x="70" y="506" class="label navLabel">系统设置</text>
+
+  <circle cx="70" cy="820" r="15" fill="#d6dde4"/>
+  <text x="96" y="816" class="label navLabel">超级管理员</text>
+  <text x="96" y="838" class="small navMuted">Tailscale verified</text>
+
+  <text x="286" y="70" class="title">联邦总览</text>
+  <text x="286" y="96" class="small">用户、设备、Agent、关系与系统风险</text>
+  <rect x="1228" y="52" width="148" height="38" class="panel"/>
+  <text x="1250" y="76" class="label">刷新状态</text>
+
+  <rect x="286" y="126" width="245" height="94" class="metricGreen"/>
+  <text x="308" y="154" class="small">在线设备</text>
+  <text x="308" y="194" font-size="32" font-weight="700">3 / 3</text>
+
+  <rect x="551" y="126" width="245" height="94" class="metricBlue"/>
+  <text x="573" y="154" class="small">General Agent</text>
+  <text x="573" y="194" font-size="32" font-weight="700">3</text>
+
+  <rect x="816" y="126" width="245" height="94" class="metricAmber"/>
+  <text x="838" y="154" class="small">活动关系</text>
+  <text x="838" y="194" font-size="32" font-weight="700">6</text>
+
+  <rect x="1081" y="126" width="295" height="94" class="metricRed"/>
+  <text x="1103" y="154" class="small">待处理告警</text>
+  <text x="1103" y="194" font-size="32" font-weight="700">2</text>
+
+  <rect x="286" y="244" width="750" height="394" class="panel"/>
+  <text x="312" y="278" class="heading">联邦拓扑</text>
+  <text x="866" y="278" class="small">仅显示 General 间联邦关系</text>
+
+  <rect x="326" y="320" width="190" height="254" class="node"/>
+  <text x="350" y="350" class="label">用户 A · nano2</text>
+  <circle cx="482" cy="346" r="6" class="ok"/>
+  <rect x="350" y="376" width="142" height="44" class="panel"/>
+  <text x="370" y="404" class="label">general</text>
+  <rect x="366" y="446" width="110" height="30" class="panel"/>
+  <text x="386" y="466" class="small">work</text>
+  <rect x="366" y="486" width="110" height="30" class="panel"/>
+  <text x="386" y="506" class="small">ceo</text>
+  <rect x="366" y="526" width="110" height="30" class="panel"/>
+  <text x="386" y="546" class="small">research</text>
+  <path d="M421 420 V446 M421 476 V486 M421 516 V526" class="internal"/>
+
+  <rect x="620" y="320" width="170" height="190" class="node"/>
+  <text x="642" y="350" class="label">用户 B · nx2</text>
+  <circle cx="762" cy="346" r="6" class="ok"/>
+  <rect x="642" y="376" width="126" height="44" class="panel"/>
+  <text x="662" y="404" class="label">general</text>
+  <rect x="656" y="446" width="98" height="30" class="panel"/>
+  <text x="672" y="466" class="small">内部 Agent</text>
+
+  <rect x="848" y="320" width="150" height="190" class="node"/>
+  <text x="870" y="350" class="label">用户 C · nx3</text>
+  <circle cx="970" cy="346" r="6" class="ok"/>
+  <rect x="870" y="376" width="106" height="44" class="panel"/>
+  <text x="890" y="404" class="label">general</text>
+  <rect x="882" y="446" width="82" height="30" class="panel"/>
+  <text x="892" y="466" class="small">内部 Agent</text>
+
+  <path d="M492 398 H642" class="edge"/>
+  <path d="M492 388 C620 292 760 292 870 388" class="edge"/>
+  <text x="538" y="384" class="small">research / general</text>
+
+  <rect x="1056" y="244" width="320" height="394" class="panel"/>
+  <text x="1082" y="278" class="heading">问题与建议</text>
+
+  <circle cx="1088" cy="320" r="7" class="bad"/>
+  <text x="1106" y="324" class="label">历史 specialist 直达关系</text>
+  <text x="1106" y="346" class="small">nx2/research 不符合 General 边界</text>
+
+  <circle cx="1088" cy="384" r="7" class="warn"/>
+  <text x="1106" y="388" class="label">nx2 SQLite 版本风险</text>
+  <text x="1106" y="410" class="small">建议升级到安全版本</text>
+
+  <circle cx="1088" cy="448" r="7" class="ok"/>
+  <text x="1106" y="452" class="label">三台 Node Agent 在线</text>
+  <text x="1106" y="474" class="small">最近同步均在阈值内</text>
+
+  <rect x="1082" y="520" width="268" height="86" fill="#f7f9fb" stroke="#c7ced6" rx="5"/>
+  <text x="1102" y="548" class="label">快速诊断</text>
+  <text x="1102" y="572" class="small">为什么 nano2 无法调用 nx2？</text>
+  <text x="1102" y="592" class="small" fill="#2667a8">运行诊断 →</text>
+
+  <rect x="286" y="660" width="750" height="176" class="panel"/>
+  <text x="312" y="694" class="heading">最近变更</text>
+  <line x1="312" y1="714" x2="1010" y2="714" stroke="#d6dce2"/>
+  <text x="312" y="742" class="small">02:22</text>
+  <text x="382" y="742" class="label">管理员</text>
+  <text x="474" y="742" class="small">部署 Federation v0.6.0 到 nano2、nx2、nx3</text>
+  <text x="930" y="742" class="small" fill="#23815c">成功</text>
+  <line x1="312" y1="758" x2="1010" y2="758" stroke="#e1e5e9"/>
+  <text x="312" y="786" class="small">01:58</text>
+  <text x="382" y="786" class="label">系统</text>
+  <text x="474" y="786" class="small">检测到 nx2/research 直达关系偏差</text>
+  <text x="930" y="786" class="small" fill="#b88413">待处理</text>
+
+  <rect x="1056" y="660" width="320" height="176" class="panel"/>
+  <text x="1082" y="694" class="heading">节点状态</text>
+  <text x="1082" y="730" class="label">nano2</text>
+  <circle cx="1334" cy="726" r="6" class="ok"/>
+  <text x="1082" y="770" class="label">nx2</text>
+  <circle cx="1334" cy="766" r="6" class="ok"/>
+  <text x="1082" y="810" class="label">nx3</text>
+  <circle cx="1334" cy="806" r="6" class="ok"/>
+</svg>
