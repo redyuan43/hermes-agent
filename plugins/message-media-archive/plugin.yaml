@@ -1,0 +1,7 @@
+name: message-media-archive
+version: 1.0.0
+description: "Archives trusted message media before transient gateway caches expire."
+author: SIYUAN
+manifest_version: 2
+hooks:
+  - on_session_end

@@ -57,7 +57,8 @@ def test_assistant_media_directive_is_cleaned_and_path_is_not_exposed(tmp_path):
 
     assert projection.rendered_content == "Done."
     item = projection.media[0]
-    assert item.local_path == video.resolve()
+    assert item.local_path != video.resolve()
+    assert item.local_path.read_bytes() == b"video-bytes"
     assert item.descriptor["kind"] == "video"
     assert item.descriptor["source"] == "media_directive"
     assert str(video) not in json.dumps(item.descriptor)
@@ -75,6 +76,64 @@ def test_user_media_directive_cannot_select_a_server_path(tmp_path):
     ]
 
     projection = _projection(messages)["3"]
+
+    assert projection.rendered_content is None
+    assert not projection.media
+
+
+def test_legacy_managed_user_image_is_archived_and_survives_cache_cleanup(
+    monkeypatch,
+    tmp_path,
+):
+    home = tmp_path / ".hermes"
+    image = home / "cache" / "images" / "img_0123456789ab.jpg"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"legacy-image")
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    messages = [
+        {
+            "id": 30,
+            "role": "user",
+            "content": (
+                "What is shown?\n\n"
+                f"[Image attached at: {image}]\n"
+                "[screenshot]"
+            ),
+        }
+    ]
+
+    first = _projection(messages)["30"]
+
+    assert first.rendered_content == "What is shown?"
+    assert len(first.media) == 1
+    item = first.media[0]
+    assert item.descriptor["kind"] == "image"
+    assert item.descriptor["source"] == "legacy_attachment"
+    assert item.local_path != image
+    assert item.local_path.read_bytes() == b"legacy-image"
+
+    image.unlink()
+    second = _projection(messages)["30"].media[0]
+    assert second.descriptor["id"] == item.descriptor["id"]
+    assert second.local_path == item.local_path
+    assert second.local_path.read_bytes() == b"legacy-image"
+
+
+def test_legacy_user_image_marker_rejects_non_cache_paths(monkeypatch, tmp_path):
+    home = tmp_path / ".hermes"
+    secret = home / "private" / "img_0123456789ab.jpg"
+    secret.parent.mkdir(parents=True)
+    secret.write_bytes(b"secret")
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    messages = [
+        {
+            "id": 31,
+            "role": "user",
+            "content": f"[Image attached at: {secret}]",
+        }
+    ]
+
+    projection = _projection(messages)["31"]
 
     assert projection.rendered_content is None
     assert not projection.media
@@ -175,6 +234,36 @@ def test_known_tool_artifacts_attach_to_final_assistant_only(tmp_path):
         "https://cdn.example/generated.mp4"
     )
     assert final_media[2].descriptor["mime_type"] == "audio/mpeg"
+
+
+def test_tts_remote_url_attaches_as_audio():
+    messages = [
+        {"id": 1, "role": "user", "content": "speak"},
+        {
+            "id": 2,
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "tts-call", "function": {"name": "text_to_speech"}},
+            ],
+        },
+        {
+            "id": 3,
+            "role": "tool",
+            "tool_call_id": "tts-call",
+            "content": json.dumps({
+                "success": True,
+                "audio_url": "https://cdn.example/speech.mp3",
+            }),
+        },
+        {"id": 4, "role": "assistant", "content": "Finished."},
+    ]
+
+    item = _projection(messages)["4"].media[0]
+
+    assert item.descriptor["kind"] == "audio"
+    assert item.descriptor["url"] == "https://cdn.example/speech.mp3"
+    assert item.descriptor["auth_required"] is False
 
 
 def test_unknown_tools_code_blocks_and_later_turns_are_ignored(tmp_path):

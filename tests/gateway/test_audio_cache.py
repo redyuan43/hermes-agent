@@ -88,6 +88,37 @@ class TestCleanupAudioCache:
 
 class TestUnifiedMediaCacheCleanup:
 
+    def test_cleanup_video_cache_preserves_managed_generated_archive(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        from gateway.platforms.base import cleanup_video_cache
+
+        monkeypatch.setattr(
+            "gateway.platforms.base.VIDEO_CACHE_DIR",
+            tmp_path / "videos",
+        )
+        monkeypatch.setattr(
+            "tools.video_generation_tool._prune_video_archive",
+            lambda _cache_dir: None,
+        )
+        cache_dir = tmp_path / "videos"
+        cache_dir.mkdir()
+        generated = cache_dir / "generated_deadbeef.mp4"
+        transient = cache_dir / "video_deadbeef.mp4"
+        generated.write_bytes(b"generated")
+        transient.write_bytes(b"transient")
+        old_mtime = time.time() - 48 * 3600
+        os.utime(generated, (old_mtime, old_mtime))
+        os.utime(transient, (old_mtime, old_mtime))
+
+        removed = cleanup_video_cache(max_age_hours=24)
+
+        assert removed == 1
+        assert generated.exists()
+        assert not transient.exists()
+
     def test_cleanup_screenshot_cache_removes_old_files(self, tmp_path, monkeypatch):
         from gateway.platforms.base import (
             cleanup_screenshot_cache,
@@ -109,4 +140,3 @@ class TestUnifiedMediaCacheCleanup:
         assert removed == 1
         assert not old_file.exists()
         assert fresh.exists()
-
