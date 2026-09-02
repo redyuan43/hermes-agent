@@ -7,6 +7,7 @@ import httpx
 
 from tools.url_safety import (
     is_safe_url,
+    is_public_https_url,
     async_is_safe_url,
     is_always_blocked_url,
     normalize_url_for_request,
@@ -156,6 +157,27 @@ class TestProxyEnvironmentDnsDelegation:
     def test_qq_multimedia_hostname_exception(self, url, expected):
         with _resolves_to("198.18.0.23"):
             assert is_safe_url(url) is expected
+
+
+class TestIsPublicHttpsUrl:
+    def test_allows_public_https(self):
+        with _resolves_to("93.184.216.34"):
+            assert is_public_https_url("https://cdn.example/video.mp4") is True
+
+    def test_rejects_http_even_when_public(self):
+        with _resolves_to("93.184.216.34"):
+            assert is_public_https_url("http://cdn.example/video.mp4") is False
+
+    def test_ignores_global_private_url_override(self):
+        with (
+            _resolves_to("192.168.1.20"),
+            patch("tools.url_safety._global_allow_private_urls", return_value=True),
+        ):
+            assert is_public_https_url("https://private.example/video.mp4") is False
+
+    def test_rejects_mixed_public_and_private_dns_answers(self):
+        with _resolves_to("93.184.216.34", "127.0.0.1"):
+            assert is_public_https_url("https://mixed.example/video.mp4") is False
 
 
 class TestAsyncIsSafeUrl:

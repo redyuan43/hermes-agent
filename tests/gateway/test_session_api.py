@@ -1,6 +1,7 @@
 """Focused tests for API server session-control endpoints."""
 
 import asyncio
+import json
 import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -47,6 +48,10 @@ def _create_session_app(adapter: APIServerAdapter) -> web.Application:
     app.router.add_patch("/api/sessions/{session_id}", adapter._handle_patch_session)
     app.router.add_delete("/api/sessions/{session_id}", adapter._handle_delete_session)
     app.router.add_get("/api/sessions/{session_id}/messages", adapter._handle_session_messages)
+    app.router.add_get(
+        "/api/sessions/{session_id}/messages/{message_id}/media/{media_id}",
+        adapter._handle_session_message_media,
+    )
     app.router.add_post("/api/sessions/{session_id}/fork", adapter._handle_fork_session)
     app.router.add_post("/api/sessions/{session_id}/chat", adapter._handle_session_chat)
     app.router.add_post("/api/sessions/{session_id}/chat/stream", adapter._handle_session_chat_stream)
@@ -67,6 +72,7 @@ async def test_capabilities_advertises_session_control_surface(adapter):
     assert features["session_chat_streaming"] is True
     assert features["session_fork"] is True
     assert features["run_steer"] is True
+    assert features["message_media_v1"] is True
     assert features["admin_config_rw"] is False
     assert features["memory_write_api"] is False
     assert features["skills_api"] is True
@@ -80,6 +86,9 @@ async def test_capabilities_advertises_session_control_surface(adapter):
         "method": "POST",
         "path": "/v1/runs/{run_id}/steer",
     }
+    assert data["endpoints"]["session_message_media"]["path"].endswith(
+        "/messages/{message_id}/media/{media_id}"
+    )
 
 
 @pytest.mark.asyncio
@@ -114,6 +123,97 @@ async def test_session_messages_default_to_latest_bounded_page(adapter, session_
         "msg 1",
         "msg 2",
     ]
+
+
+@pytest.mark.asyncio
+async def test_session_media_json_auth_head_range_and_message_binding(
+    auth_adapter,
+    session_db,
+    tmp_path,
+):
+    session_id = session_db.create_session("media-session", "api_server")
+    files = {
+        "image": tmp_path / "picture.png",
+        "video": tmp_path / "clip.mp4",
+        "audio": tmp_path / "speech.mp3",
+        "file": tmp_path / "report.pdf",
+    }
+    payloads = {
+        "image": b"\x89PNG\r\n",
+        "video": b"0123456789",
+        "audio": b"ID3audio",
+        "file": b"%PDF-1.7",
+    }
+    message_ids = {}
+    for kind, path in files.items():
+        path.write_bytes(payloads[kind])
+        message_ids[kind] = session_db.append_message(
+            session_id,
+            "assistant",
+            f"{kind} ready.\nMEDIA:{path}",
+        )
+    app = _create_session_app(auth_adapter)
+
+    async with TestClient(TestServer(app)) as cli:
+        history = await cli.get(
+            f"/api/sessions/{session_id}/messages",
+            headers={"Authorization": "Bearer sk-test"},
+        )
+        assert history.status == 200
+        response = await history.json()
+        assert [message["content"] for message in response["data"]] == [
+            f"{kind} ready.\nMEDIA:{files[kind]}"
+            for kind in ("image", "video", "audio", "file")
+        ]
+        media_by_kind = {
+            message["media"][0]["kind"]: message["media"][0]
+            for message in response["data"]
+        }
+        assert set(media_by_kind) == {"image", "video", "audio", "file"}
+        assert media_by_kind["image"]["mime_type"] == "image/png"
+        assert media_by_kind["video"]["mime_type"] == "video/mp4"
+        assert media_by_kind["audio"]["mime_type"] == "audio/mpeg"
+        assert media_by_kind["file"]["mime_type"] == "application/pdf"
+        assert all(
+            str(tmp_path) not in json.dumps(descriptor)
+            for descriptor in media_by_kind.values()
+        )
+
+        video = media_by_kind["video"]
+        unauthenticated = await cli.get(video["url"])
+        assert unauthenticated.status == 401
+
+        ranged = await cli.get(
+            video["url"],
+            headers={
+                "Authorization": "Bearer sk-test",
+                "Range": "bytes=2-5",
+            },
+        )
+        assert ranged.status == 206
+        assert await ranged.read() == b"2345"
+        assert ranged.headers["Content-Type"].startswith("video/mp4")
+        assert ranged.headers["Content-Disposition"].startswith("inline")
+        assert ranged.headers["Content-Range"] == "bytes 2-5/10"
+        assert ranged.headers.get("ETag")
+
+        head = await cli.head(
+            video["url"],
+            headers={"Authorization": "Bearer sk-test"},
+        )
+        assert head.status == 200
+        assert head.headers["Content-Length"] == "10"
+        assert await head.read() == b""
+
+        wrong_message_url = video["url"].replace(
+            f"/messages/{message_ids['video']}/",
+            f"/messages/{message_ids['image']}/",
+        )
+        wrong_message = await cli.get(
+            wrong_message_url,
+            headers={"Authorization": "Bearer sk-test"},
+        )
+        assert wrong_message.status == 404
 
 
 @pytest.mark.asyncio

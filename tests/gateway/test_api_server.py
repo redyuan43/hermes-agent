@@ -880,10 +880,12 @@ class TestCapabilitiesEndpoint:
             }
             assert data["features"]["model_options"] is True
             assert data["features"]["session_continuity_header"] == "X-Hermes-Session-Id"
+            assert data["features"]["message_media_v1"] is True
             assert data["endpoints"]["run_status"]["path"] == "/v1/runs/{run_id}"
             assert data["endpoints"]["model_options"] == {"method": "GET", "path": "/api/model/options"}
             assert data["endpoints"]["skills"] == {"method": "GET", "path": "/v1/skills"}
             assert data["endpoints"]["toolsets"] == {"method": "GET", "path": "/v1/toolsets"}
+            assert data["endpoints"]["session_message_media"]["method"] == "GET"
 
     @pytest.mark.asyncio
     async def test_capabilities_reports_in_memory_idempotency_fallback(self, adapter):

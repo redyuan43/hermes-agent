@@ -70,12 +70,15 @@ class TestUnifiedDispatch:
         saved = video_generation_tool._read_configured_video_provider
         video_generation_tool._read_configured_video_provider = lambda: configured  # type: ignore
         saved_discover = plugins_module._ensure_plugins_discovered
+        saved_archive = video_generation_tool._archive_remote_video_result
         plugins_module._ensure_plugins_discovered = lambda *_a, **_k: None  # type: ignore
+        video_generation_tool._archive_remote_video_result = lambda result: result  # type: ignore
         try:
             raw = video_generation_tool._handle_video_generate(args)
         finally:
             video_generation_tool._read_configured_video_provider = saved  # type: ignore
             plugins_module._ensure_plugins_discovered = saved_discover  # type: ignore
+            video_generation_tool._archive_remote_video_result = saved_archive  # type: ignore
         return json.loads(raw)
 
     def test_no_provider_returns_clear_error(self):

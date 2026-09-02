@@ -519,6 +519,48 @@ def is_safe_url(url: str) -> bool:
         return False
 
 
+def is_public_https_url(url: str) -> bool:
+    """Return True only for HTTPS URLs resolving exclusively to public IPs.
+
+    This intentionally ignores ``security.allow_private_urls``. Generated
+    artifact archival is unattended, so a browser/network exception must not
+    widen its download boundary.
+    """
+    try:
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").strip().lower().rstrip(".")
+        if parsed.scheme.lower() != "https" or not hostname:
+            return False
+        if hostname in _BLOCKED_HOSTNAMES:
+            return False
+        try:
+            addr_info = socket.getaddrinfo(
+                hostname,
+                None,
+                socket.AF_UNSPEC,
+                socket.SOCK_STREAM,
+            )
+        except socket.gaierror:
+            return False
+        if not addr_info:
+            return False
+        for _family, _, _, _, sockaddr in addr_info:
+            ip_str = sockaddr[0].split("%", 1)[0]
+            try:
+                ip = ipaddress.ip_address(ip_str)
+            except ValueError:
+                return False
+            if (
+                ip in _ALWAYS_BLOCKED_IPS
+                or any(ip in network for network in _ALWAYS_BLOCKED_NETWORKS)
+                or _is_blocked_ip(ip)
+            ):
+                return False
+        return True
+    except Exception:
+        return False
+
+
 async def async_is_safe_url(url: str) -> bool:
     """Same rules as :func:`is_safe_url`, but run the DNS work off the event loop.
 

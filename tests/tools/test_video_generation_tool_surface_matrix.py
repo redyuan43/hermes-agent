@@ -36,6 +36,12 @@ def matrix_env(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     monkeypatch.setenv("FAL_KEY", "test-key")
     monkeypatch.setenv("XAI_API_KEY", "test-key")
+    from tools import video_generation_tool
+    monkeypatch.setattr(
+        video_generation_tool,
+        "_archive_remote_video_result",
+        lambda result: result,
+    )
 
     fal_calls: List[Dict[str, Any]] = []
     xai_calls: List[Dict[str, Any]] = []
@@ -59,6 +65,8 @@ def matrix_env(tmp_path, monkeypatch):
     fake_fal.submit = _submit  # type: ignore
 
     monkeypatch.setitem(__import__("sys").modules, "fal_client", fake_fal)
+    import tools.fal_common as fal_common
+    monkeypatch.setattr(fal_common, "import_fal_client", lambda: fake_fal)
 
     # httpx stub for xAI
     import httpx
@@ -102,7 +110,7 @@ def matrix_env(tmp_path, monkeypatch):
 
     # Reset FAL plugin's lazy fal_client cache so it picks up the stub
     from plugins.video_gen import fal as fal_plugin
-    fal_plugin._fal_client = None
+    fal_plugin._fal_client = fake_fal
 
     # Force discovery
     from hermes_cli.plugins import _ensure_plugins_discovered

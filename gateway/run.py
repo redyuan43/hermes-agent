@@ -2006,6 +2006,7 @@ _AUTO_APPEND_MEDIA_TOOL_NAMES = {
     "text_to_speech",
     "text_to_speech_tool",
     "image_generate",
+    "video_generate",
 }
 
 # ---- helpers: detect interrupted tool tails & auto-continue noise ----------
@@ -2060,7 +2061,10 @@ def _strip_auto_continue_noise(content: Any) -> Any:
 # returns ``{"success": true, "image": "/abs/path.png"}``). The auto-append path
 # extracts the path from these fields so delivery is deterministic and does not
 # depend on the model restating the path in its final reply.
-_JSON_MEDIA_TOOL_PATH_FIELDS = ("host_image", "image", "agent_visible_image")
+_JSON_MEDIA_TOOL_PATH_FIELDS_BY_TOOL = {
+    "image_generate": ("host_image", "image", "agent_visible_image"),
+    "video_generate": ("host_video", "video"),
+}
 
 
 # Extension-anchored MEDIA: matcher for tool results. Mirrors the dispatch-site
@@ -2132,13 +2136,13 @@ def _collect_auto_append_media_tags(
         # JSON-payload tools (image_generate) return a local-file path in a
         # known field rather than a MEDIA: tag. Extract it so delivery is
         # deterministic even when the model omits the path from its reply.
-        if tool_name == "image_generate" and "MEDIA:" not in content:
+        if tool_name in _JSON_MEDIA_TOOL_PATH_FIELDS_BY_TOOL and "MEDIA:" not in content:
             try:
                 payload = json.loads(content)
             except Exception:
                 payload = None
             if isinstance(payload, dict) and payload.get("success"):
-                for field in _JSON_MEDIA_TOOL_PATH_FIELDS:
+                for field in _JSON_MEDIA_TOOL_PATH_FIELDS_BY_TOOL[tool_name]:
                     path = payload.get(field)
                     if (isinstance(path, str)
                             and _TOOL_MEDIA_RE.fullmatch(f"MEDIA:{path}")
@@ -2200,13 +2204,14 @@ def _collect_history_media_paths(agent_history: List[Dict[str, Any]]) -> set:
             _add_text_media_paths(content)
             continue
         cid = str(msg.get("tool_call_id") or msg.get("call_id") or "")
-        if tool_name_by_call_id.get(cid) == "image_generate":
+        tool_name = tool_name_by_call_id.get(cid)
+        if tool_name in _JSON_MEDIA_TOOL_PATH_FIELDS_BY_TOOL:
             try:
                 payload = json.loads(content)
             except Exception:
                 payload = None
             if isinstance(payload, dict) and payload.get("success"):
-                for field in _JSON_MEDIA_TOOL_PATH_FIELDS:
+                for field in _JSON_MEDIA_TOOL_PATH_FIELDS_BY_TOOL[tool_name]:
                     jp = payload.get(field)
                     if isinstance(jp, str) and jp:
                         paths.add(jp)

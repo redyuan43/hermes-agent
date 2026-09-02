@@ -43,9 +43,14 @@ those workflows should expose separate tools.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
+import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from agent.video_gen_provider import (
     COMMON_ASPECT_RATIOS,
@@ -57,6 +62,17 @@ from agent.video_gen_provider import (
 from tools.registry import registry, tool_error
 
 logger = logging.getLogger(__name__)
+
+_VIDEO_ARCHIVE_MAX_BYTES = 512 * 1024 * 1024
+_VIDEO_ARCHIVE_MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
+_VIDEO_ARCHIVE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
+_VIDEO_ARCHIVE_PART_MAX_AGE_SECONDS = 24 * 60 * 60
+_VIDEO_ARCHIVE_EXTENSIONS = {
+    "video/mp4": ".mp4",
+    "video/quicktime": ".mov",
+    "video/webm": ".webm",
+    "video/x-matroska": ".mkv",
+}
 
 
 VIDEO_GENERATE_SCHEMA: Dict[str, Any] = {
@@ -262,6 +278,171 @@ def _normalize_reference_images(value: Any) -> Optional[List[str]]:
     return out or None
 
 
+def _archive_remote_video_result(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Best-effort archive of a provider video URL into Hermes' video cache."""
+    if result.get("success") is not True:
+        return result
+    video_url = result.get("video")
+    if not isinstance(video_url, str) or not video_url.strip():
+        return result
+    video_url = video_url.strip()
+    parsed = urlparse(video_url)
+    if parsed.scheme.lower() not in {"http", "https"}:
+        if Path(video_url).is_absolute():
+            result.setdefault("host_video", video_url)
+        return result
+
+    try:
+        archived = _download_video_archive(video_url)
+    except Exception as exc:
+        logger.warning(
+            "Video generation succeeded but archival failed "
+            "(host=%s, error_type=%s)",
+            parsed.hostname or "<unknown>",
+            type(exc).__name__,
+        )
+        return result
+    if archived is not None:
+        result.setdefault("host_video", str(archived))
+    return result
+
+
+def _download_video_archive(video_url: str) -> Optional[Path]:
+    """Stream one known video-tool result from public HTTPS into managed cache."""
+    import httpx
+
+    from agent.video_gen_provider import _videos_cache_dir
+    from tools.url_safety import (
+        create_ssrf_safe_client,
+        is_public_https_url,
+        redirect_target_from_response,
+    )
+
+    if not is_public_https_url(video_url):
+        raise ValueError("video URL is not a public HTTPS target")
+
+    cache_dir = _videos_cache_dir()
+    _prune_video_archive(cache_dir)
+    url_digest = hashlib.sha256(video_url.encode("utf-8")).hexdigest()[:24]
+
+    def _redirect_guard(response) -> None:
+        redirect_url = redirect_target_from_response(response)
+        if redirect_url and not is_public_https_url(redirect_url):
+            raise ValueError("video redirect is not a public HTTPS target")
+
+    timeout = httpx.Timeout(300.0, connect=15.0)
+    with create_ssrf_safe_client(
+        timeout=timeout,
+        follow_redirects=True,
+        event_hooks={"response": [_redirect_guard]},
+    ) as client:
+        with client.stream(
+            "GET",
+            video_url,
+            headers={
+                "Accept": "video/*,application/octet-stream;q=0.8",
+                "User-Agent": "Hermes-Agent/1.0",
+            },
+        ) as response:
+            response.raise_for_status()
+            content_length = response.headers.get("content-length")
+            if content_length:
+                try:
+                    declared_size = int(content_length)
+                except ValueError:
+                    declared_size = 0
+                if declared_size > _VIDEO_ARCHIVE_MAX_BYTES:
+                    raise ValueError("video exceeds the 512 MiB archive limit")
+
+            content_type = (
+                response.headers.get("content-type", "")
+                .split(";", 1)[0]
+                .strip()
+                .lower()
+            )
+            final_url = str(response.url)
+            suffix = _video_archive_suffix(content_type, final_url)
+            if suffix is None:
+                raise ValueError("response is not a supported video type")
+            destination = cache_dir / f"generated_{url_digest}{suffix}"
+            if destination.is_file() and destination.stat().st_size > 0:
+                os.utime(destination, None)
+                return destination
+            temporary = destination.with_suffix(destination.suffix + ".part")
+            written = 0
+            try:
+                with temporary.open("wb") as output:
+                    os.chmod(temporary, 0o600)
+                    for chunk in response.iter_bytes(1024 * 1024):
+                        if not chunk:
+                            continue
+                        written += len(chunk)
+                        if written > _VIDEO_ARCHIVE_MAX_BYTES:
+                            raise ValueError(
+                                "video exceeds the 512 MiB archive limit"
+                            )
+                        output.write(chunk)
+                    output.flush()
+                    os.fsync(output.fileno())
+                if written <= 0:
+                    raise ValueError("video response was empty")
+                os.replace(temporary, destination)
+            finally:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
+    _prune_video_archive(cache_dir)
+    return destination
+
+
+def _video_archive_suffix(content_type: str, url: str) -> Optional[str]:
+    if content_type in _VIDEO_ARCHIVE_EXTENSIONS:
+        return _VIDEO_ARCHIVE_EXTENSIONS[content_type]
+    suffix = Path(urlparse(url).path).suffix.lower()
+    if suffix in set(_VIDEO_ARCHIVE_EXTENSIONS.values()):
+        return suffix
+    return None
+
+
+def _prune_video_archive(cache_dir: Path, *, now: Optional[float] = None) -> None:
+    """Remove expired files, then enforce the 2 GiB least-recently-used cap."""
+    current = time.time() if now is None else now
+    entries = []
+    for path in cache_dir.iterdir():
+        if not path.is_file():
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        if path.name.endswith(".part"):
+            if current - stat.st_mtime > _VIDEO_ARCHIVE_PART_MAX_AGE_SECONDS:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+            continue
+        last_used = max(stat.st_atime, stat.st_mtime)
+        if current - last_used > _VIDEO_ARCHIVE_MAX_AGE_SECONDS:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            continue
+        entries.append((last_used, stat.st_size, path))
+
+    total = sum(size for _, size, _ in entries)
+    for _, size, path in sorted(entries):
+        if total <= _VIDEO_ARCHIVE_MAX_TOTAL_BYTES:
+            break
+        try:
+            path.unlink()
+        except OSError:
+            continue
+        total -= size
+
+
 def _handle_video_generate(args: Dict[str, Any], **_kw: Any) -> str:
     prompt = (args.get("prompt") or "").strip()
     image_url = (args.get("image_url") or "").strip() or None
@@ -364,7 +545,7 @@ def _handle_video_generate(args: Dict[str, Any], **_kw: Any) -> str:
             prompt=prompt,
         ))
 
-    return json.dumps(result)
+    return json.dumps(_archive_remote_video_result(result))
 
 
 # ---------------------------------------------------------------------------

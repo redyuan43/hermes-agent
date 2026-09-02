@@ -326,6 +326,31 @@ caption
         assert tags == []
         assert voice is False
 
+    def test_gateway_auto_append_video_generate_prefers_archived_host_path(self):
+        from gateway.run import _collect_auto_append_media_tags
+
+        messages = [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {"id": "call_video", "function": {"name": "video_generate"}}
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_video",
+                "content": (
+                    '{"success": true, "host_video": "/host/video.mp4", '
+                    '"video": "https://cdn.example/video.mp4"}'
+                ),
+            },
+        ]
+
+        tags, voice = _collect_auto_append_media_tags(messages, history_offset=0)
+
+        assert tags == ["MEDIA:/host/video.mp4"]
+        assert voice is False
+
 
     def test_collect_history_media_paths_includes_image_generate_json(self):
         """Regression for #46627: the history media-path collector must pick up

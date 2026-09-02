@@ -47,6 +47,7 @@ import hashlib
 import hmac
 import itertools
 import json
+import mimetypes
 from contextlib import contextmanager, nullcontext, suppress
 from contextvars import ContextVar
 from functools import wraps
@@ -60,6 +61,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 # Sentinel returned by _resolve_request_profile when a /p/<profile>/ prefix
 # names a profile this gateway does not serve (→ 404). Distinct from None
@@ -152,6 +154,7 @@ from gateway.platforms.base import (
 from gateway.platforms.api_server_run_idempotency import RunIdempotencyStore
 from agent.redact import redact_sensitive_text
 from agent.interrupt_compat import request_hard_interrupt
+from gateway.message_media import project_message_media
 from gateway.readiness import collect_runtime_readiness
 from gateway.browser_control_artifacts import (
     ArtifactError,
@@ -2240,6 +2243,8 @@ class APIServerAdapter(BasePlatformAdapter):
             ("PATCH", "/api/sessions/{session_id}", self._handle_patch_session),
             ("DELETE", "/api/sessions/{session_id}", self._handle_delete_session),
             ("GET", "/api/sessions/{session_id}/messages", self._handle_session_messages),
+            ("GET", "/api/sessions/{session_id}/messages/{message_id}/media/{media_id}", self._handle_session_message_media),
+            ("HEAD", "/api/sessions/{session_id}/messages/{message_id}/media/{media_id}", self._handle_session_message_media),
             ("POST", "/api/sessions/{session_id}/fork", self._handle_fork_session),
             ("POST", "/api/sessions/{session_id}/chat", self._handle_session_chat),
             ("POST", "/api/sessions/{session_id}/chat/stream", self._handle_session_chat_stream),
@@ -3361,6 +3366,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 "session_chat_streaming": True,
                 "session_fork": True,
                 "session_model_lock": True,
+                "message_media_v1": True,
                 "admin_config_rw": False,
                 "jobs_admin": False,
                 "memory_write_api": False,
@@ -3418,6 +3424,10 @@ class APIServerAdapter(BasePlatformAdapter):
                 "session_update": {"method": "PATCH", "path": "/api/sessions/{session_id}"},
                 "session_delete": {"method": "DELETE", "path": "/api/sessions/{session_id}"},
                 "session_messages": {"method": "GET", "path": "/api/sessions/{session_id}/messages"},
+                "session_message_media": {
+                    "method": "GET",
+                    "path": "/api/sessions/{session_id}/messages/{message_id}/media/{media_id}",
+                },
                 "session_fork": {"method": "POST", "path": "/api/sessions/{session_id}/fork"},
                 "session_chat": {"method": "POST", "path": "/api/sessions/{session_id}/chat"},
                 "session_chat_stream": {"method": "POST", "path": "/api/sessions/{session_id}/chat/stream"},
@@ -4542,10 +4552,32 @@ class APIServerAdapter(BasePlatformAdapter):
             offset=offset,
             latest=latest_page,
         )
+        projections = await asyncio.to_thread(
+            project_message_media, messages, session_id=resolved_id
+        )
+        response_messages = []
+        for message in messages:
+            response_message = self._message_response(message)
+            message_id = str(message.get("id") or "")
+            projection = projections.get(message_id)
+            if projection is not None:
+                if projection.rendered_content is not None:
+                    response_message["rendered_content"] = projection.rendered_content
+                if projection.media:
+                    media = []
+                    for item in projection.media:
+                        descriptor = dict(item.descriptor)
+                        if item.local_path is not None:
+                            descriptor["url"] = self._message_media_url(
+                                resolved_id, message_id, descriptor["id"]
+                            )
+                        media.append(descriptor)
+                    response_message["media"] = media
+            response_messages.append(response_message)
         return web.json_response({
             "object": "list",
             "session_id": resolved_id,
-            "data": [self._message_response(m) for m in messages],
+            "data": response_messages,
             "pagination": {
                 "limit": limit,
                 "offset": offset,
@@ -4553,6 +4585,87 @@ class APIServerAdapter(BasePlatformAdapter):
                 "returned": len(messages),
             },
         })
+
+    @staticmethod
+    def _message_media_url(session_id: str, message_id: str, media_id: str) -> str:
+        profile = _api_request_profile.get()
+        prefix = f"/p/{quote(profile, safe='')}" if profile and profile != "default" else ""
+        return (
+            f"{prefix}/api/sessions/{quote(session_id, safe='')}/messages/"
+            f"{quote(message_id, safe='')}/media/{quote(media_id, safe='')}"
+        )
+
+    async def _handle_session_message_media(
+        self,
+        request: "web.Request",
+    ) -> "web.StreamResponse":
+        """Serve one message-owned local artifact through Bearer auth."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        session_id = request.match_info["session_id"]
+        _, err = await self._get_existing_session_or_404(session_id)
+        if err:
+            return err
+        db = await self._ensure_session_db_async()
+        resolved_id = await asyncio.to_thread(db.resolve_resume_session_id, session_id)
+        messages = await asyncio.to_thread(db.get_messages, resolved_id)
+        message_id = request.match_info["message_id"]
+        media_id = request.match_info["media_id"]
+        projections = await asyncio.to_thread(
+            project_message_media, messages, session_id=resolved_id
+        )
+        projection = projections.get(message_id)
+        if projection is None:
+            raise web.HTTPNotFound()
+
+        target = next(
+            (
+                item
+                for item in projection.media
+                if item.descriptor.get("id") == media_id and item.local_path is not None
+            ),
+            None,
+        )
+        if target is None or target.local_path is None:
+            raise web.HTTPNotFound()
+        try:
+            if not target.local_path.is_file():
+                raise web.HTTPNotFound()
+        except OSError:
+            raise web.HTTPNotFound()
+
+        descriptor = target.descriptor
+        disposition = (
+            "inline"
+            if descriptor.get("kind") in {"image", "video", "audio"}
+            else "attachment"
+        )
+        name = str(descriptor.get("name") or "download")
+        ascii_name = "".join(
+            character
+            if 32 <= ord(character) < 127 and character not in {'"', "\\"}
+            else "_"
+            for character in name
+        ) or "download"
+        encoded_name = quote(name, safe="")
+        response = web.FileResponse(
+            target.local_path,
+            headers={
+                "Cache-Control": "private, max-age=3600",
+                "Content-Disposition": (
+                    f'{disposition}; filename="{ascii_name}"; '
+                    f"filename*=UTF-8''{encoded_name}"
+                ),
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+        mime_type = str(descriptor.get("mime_type") or "")
+        if not mime_type or mime_type.endswith("/*"):
+            mime_type = mimetypes.guess_type(target.local_path.name)[0] or "application/octet-stream"
+        response.content_type = mime_type
+        return response
 
     async def _handle_fork_session(self, request: "web.Request") -> "web.Response":
         """POST /api/sessions/{session_id}/fork — branch via current SessionDB primitives."""
