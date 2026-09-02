@@ -269,7 +269,7 @@ export function resolveStagedUpdaterBinary(
  * predating #74782 have no self-PID exclusion in `UpdateMarkerGuard::acquire`,
  * so when the desktop pre-writes the marker naming that very updater, the
  * updater reads its own claim as a foreign live owner and aborts with
- * "Another Hermes update is already running (PID <itself>, started 1s ago)" —
+ * "Another SIYUAN update is already running (PID <itself>, started 1s ago)" —
  * the observed infinite "Install didn't finish" loop. Skipping the pre-write
  * for those binaries lets them acquire cleanly and run `hermes update`, which
  * pulls the permanent fixes. See shouldPrewriteUpdateMarker.

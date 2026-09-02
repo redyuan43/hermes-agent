@@ -37,7 +37,7 @@
 const AT_COOKIE_VARIANTS = ['__Host-hermes_session_at', '__Secure-hermes_session_at', 'hermes_session_at']
 const RT_COOKIE_VARIANTS = ['__Host-hermes_session_rt', '__Secure-hermes_session_rt', 'hermes_session_rt']
 
-// The Nous portal (NAS) does NOT use Hermes gateway session cookies — it is a
+// The Nous portal (NAS) does NOT use SIYUAN gateway session cookies — it is a
 // Privy-authed Next.js app. NAS `auth()` (src/server/auth/session.ts) reads the
 // `privy-token` access-token cookie (with `privy-id-token` alongside), which is
 // also exactly what the `/api/agents` cookie-auth path validates. So portal
@@ -263,7 +263,7 @@ function connectionScopeKey(profile) {
   return String(profile ?? '').trim() || null
 }
 
-/** Which Hermes profile the remote SSH dashboard should actually run as.
+/** Which SIYUAN profile the remote SSH dashboard should actually run as.
  *  Registry pool keys (`conn:mac-mini::default`) are desktop routing labels —
  *  they must never be sent to the remote as a profile name. `default` and
  *  empty mean the remote root home. */
@@ -367,7 +367,7 @@ function remoteRequestMatchesBaseUrl(requestUrl, baseUrl) {
 }
 
 // True for connection modes that resolve to a REMOTE backend. 'cloud' is a
-// Hermes Cloud connection (cloud-auto-discovery Q3/Q6): it carries a
+// SIYUAN Cloud connection (cloud-auto-discovery Q3/Q6): it carries a
 // remote-shaped block and reuses the entire remote connect/probe/reconnect
 // path, so every resolution site treats it exactly like 'remote'. The only
 // places that distinguish cloud from remote are the settings UI (which card to
@@ -449,8 +449,8 @@ function normalizeSshConfig(entry) {
   }
 
   // A Desktop profile can be a local routing label rather than the profile
-  // name used by the remote Hermes installation. Preserve an explicit mapping
-  // when it is a valid Hermes profile identifier; otherwise fall back to the
+  // name used by the remote SIYUAN installation. Preserve an explicit mapping
+  // when it is a valid SIYUAN profile identifier; otherwise fall back to the
   // historical same-name behavior in the caller.
   const remoteProfile = String(entry.remoteProfile || '').trim()
 
@@ -972,7 +972,7 @@ function cookiesHaveLiveSession(cookies) {
  * True if the cookie jar holds a live Nous PORTAL (Privy) session — a non-empty
  * `privy-token` (access-token) cookie, or a variant. This is the portal
  * analogue of `cookiesHaveLiveSession`: the portal authenticates via Privy, not
- * the Hermes gateway session cookies, so cloud sign-in / discovery liveness
+ * the SIYUAN gateway session cookies, so cloud sign-in / discovery liveness
  * must check THIS, not the gateway helpers. (NAS `auth()` and the `/api/agents`
  * cookie path both key off `privy-token`.)
  */

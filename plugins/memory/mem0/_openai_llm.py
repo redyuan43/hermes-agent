@@ -55,7 +55,7 @@ class DirectOpenAILLM(OpenAILLM):
         api_key = self.config.api_key or os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError(
-                "OpenAI API key is required for the Hermes Mem0 OSS provider"
+                "OpenAI API key is required for the SIYUAN Mem0 OSS provider"
             )
 
         base_url = (

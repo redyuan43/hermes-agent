@@ -16,7 +16,7 @@ def build_update_parser(subparsers, *, cmd_update: Callable) -> None:
     # =========================================================================
     update_parser = subparsers.add_parser(
         "update",
-        help="Update Hermes Agent to the latest version",
+        help="Update SIYUAN to the latest version",
         description="Pull the latest changes from git and reinstall dependencies",
     )
     update_parser.add_argument(
@@ -37,7 +37,7 @@ def build_update_parser(subparsers, *, cmd_update: Callable) -> None:
         default=False,
         help=(
             "Show the update plan and exit without changing anything: install "
-            "kind (git/docker/nix), every running Hermes service across all "
+            "kind (git/docker/nix), every running SIYUAN service across all "
             "profiles with its supervisor and running code version, and how "
             "each will be restarted. Read-only; safe on a live fleet."
         ),

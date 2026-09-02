@@ -1,4 +1,4 @@
-"""Hermes update pipeline — extracted from ``hermes_cli/main.py``.
+"""SIYUAN update pipeline — extracted from ``hermes_cli/main.py``.
 
 Mechanical move (main.py decomposition): ``_cmd_update_impl``, ``_cmd_update_check``
 and every module-level helper used only by the update path, plus the update-only
@@ -88,7 +88,7 @@ _STALE_PURGE_PROTECTED = frozenset(
 
 
 def _purge_stale_hermes_modules() -> None:
-    """Evict every cached Hermes module after the checkout changed in-place.
+    """Evict every cached SIYUAN module after the checkout changed in-place.
 
     ``hermes update`` keeps running in the pre-pull Python process. The
     gateway auto-restart phase that follows does function-level
@@ -102,7 +102,7 @@ def _purge_stale_hermes_modules() -> None:
 
     ``_UPDATE_RUNTIME_RELOAD_MODULES`` handled this per-symptom — three
     hardcoded module names, re-fixed every time a new module grew a new
-    export. This is the class fix: drop EVERY cached module under the Hermes
+    export. This is the class fix: drop EVERY cached module under the SIYUAN
     package prefixes so subsequent lazy imports rebuild a self-consistent,
     all-new module graph from the updated checkout. Old module objects
     referenced by the running updater frames stay alive and functional (a
@@ -131,10 +131,10 @@ def _purge_stale_hermes_modules() -> None:
                 purged.append(name)
         if purged:
             logger.debug(
-                "Purged %d stale Hermes module(s) after checkout update", len(purged)
+                "Purged %d stale SIYUAN module(s) after checkout update", len(purged)
             )
     except Exception as exc:
-        logger.debug("Could not purge stale Hermes modules: %s", exc)
+        logger.debug("Could not purge stale SIYUAN modules: %s", exc)
 
 
 def _reload_updated_runtime_modules() -> None:
@@ -517,7 +517,7 @@ def _check_and_apply_config_migration(
         logger.debug("Sibling cron auto-restore check failed: %s", exc)
 
 
-# Critical files that Hermes must be able to import immediately after an
+# Critical files that SIYUAN must be able to import immediately after an
 # update/install. Most are imported on every CLI startup; ``web_server.py``
 # is the desktop/dashboard backend path that a fresh Windows install launches
 # right away. If any of these fail to parse after a pull, the user can be
@@ -570,7 +570,7 @@ def _editable_install_is_current(git_cmd, cwd, pre_pull_sha: str | None) -> bool
     cannot change anything removes that risk outright for the common update,
     rather than trying to make the rename win more often.
 
-    Skipping is safe because Hermes pins its editable finder to a *static*
+    Skipping is safe because SIYUAN pins its editable finder to a *static*
     module list (``[tool.setuptools] py-modules`` plus
     ``packages.find.include``). The one source-only change that would stale
     that finder is a new top-level module or package, and it cannot land
@@ -1599,11 +1599,11 @@ def _refuse_update_for_contended_shims(exc: BaseException) -> None:
     launch after the holder exits. Exits 2 (refused) so the command-boundary
     receipt net records it as a refusal, not a failure.
     """
-    print("✗ Cannot continue the update: live Hermes launcher(s) could not be")
+    print("✗ Cannot continue the update: live SIYUAN launcher(s) could not be")
     print("  moved aside:")
     for name in getattr(exc, "failed_shims", []) or ["hermes.exe"]:
         print(f"    {name}")
-    print("  Another process is holding this install's venv — typically Hermes")
+    print("  Another process is holding this install's venv — typically SIYUAN")
     print("  Desktop, a gateway, or another hermes REPL — and mutating the venv")
     print("  now would strand it half-updated.")
     print("  The dependency install has been deferred: close the process(es)")
@@ -1800,7 +1800,7 @@ def _clear_stale_sqlite_sidecars(db_path: Path) -> None:
     which is exactly why ``backup._EXCLUDED_SUFFIXES`` refuses to ship sidecars
     inside a snapshot. Copying the image over the destination replaces only the
     main database file, so any ``-wal`` / ``-shm`` left behind by the *old*
-    database (a crashed writer, or a second Hermes process the updater's drain
+    database (a crashed writer, or a second SIYUAN process the updater's drain
     did not stop) survives and is replayed over the fresh image on the next
     open. The result passes ``PRAGMA integrity_check`` while serving the old
     database's contents, and the first checkpoint folds it in permanently.
@@ -1887,7 +1887,7 @@ def _restore_state_db_from_snapshot(state_path: Path, snap_state: Path) -> bool:
 
 
 def _update_via_zip(args, *, had_desktop_app_before_update: bool = False) -> bool:
-    """Update Hermes Agent by downloading a ZIP archive.
+    """Update SIYUAN by downloading a ZIP archive.
 
     Used on Windows when git file I/O is broken (antivirus, NTFS filter
     drivers causing 'Invalid argument' errors on file creation).
@@ -2551,7 +2551,7 @@ def _reject_unsafe_stash_restore(
 ) -> None:
     """Restore the clean updated tree, preserve the stash, and abort the update."""
     print()
-    print("✗ Restored local changes made the Hermes agent unexecutable.")
+    print("✗ Restored local changes made the SIYUAN agent unexecutable.")
     print(f"  Health check failed: {failing_target}")
     if detail:
         for line in str(detail).splitlines()[:6]:
@@ -2624,7 +2624,7 @@ def _restore_stashed_changes(
         print(
             "  Restoring them may reapply local customizations onto the updated codebase."
         )
-        print("  Review the result afterward if Hermes behaves unexpectedly.")
+        print("  Review the result afterward if SIYUAN behaves unexpectedly.")
         print(f"Restore local changes now? {prompt_suffix}")
         if input_fn is not None:
             response = input_fn(f"Restore local changes now? {prompt_suffix}", "n")
@@ -2762,7 +2762,7 @@ def _restore_stashed_changes(
     stash_selector = _resolve_stash_selector(git_cmd, cwd, stash_ref)
     if stash_selector is None:
         print(
-            "⚠ Local changes were restored, but Hermes couldn't find the stash entry to drop."
+            "⚠ Local changes were restored, but SIYUAN couldn't find the stash entry to drop."
         )
         print(
             "  The stash was left in place. You can remove it manually after checking the result."
@@ -2777,7 +2777,7 @@ def _restore_stashed_changes(
         )
         if drop.returncode != 0:
             print(
-                "⚠ Local changes were restored, but Hermes couldn't drop the saved stash entry."
+                "⚠ Local changes were restored, but SIYUAN couldn't drop the saved stash entry."
             )
             if drop.stdout.strip():
                 print(drop.stdout.strip())
@@ -2789,7 +2789,7 @@ def _restore_stashed_changes(
             _print_stash_cleanup_guidance(stash_ref, stash_selector)
 
     print("⚠ Local changes were restored on top of the updated codebase.")
-    print("  Review `git diff` / `git status` if Hermes behaves unexpectedly.")
+    print("  Review `git diff` / `git status` if SIYUAN behaves unexpectedly.")
     return True
 
 def _discard_stashed_changes(
@@ -2815,7 +2815,7 @@ def _discard_stashed_changes(
     if stash_selector is None:
         print(
             "⚠ Configured to discard local changes on non-interactive update, "
-            "but Hermes couldn't find the stash entry to drop."
+            "but SIYUAN couldn't find the stash entry to drop."
         )
         _print_stash_cleanup_guidance(stash_ref)
         return False
@@ -2828,7 +2828,7 @@ def _discard_stashed_changes(
     )
     if drop.returncode != 0:
         print(
-            "⚠ Configured to discard local changes, but Hermes couldn't drop "
+            "⚠ Configured to discard local changes, but SIYUAN couldn't drop "
             "the saved stash entry."
         )
         if drop.stderr.strip():
@@ -2982,7 +2982,7 @@ def _sync_with_upstream_if_needed(
             return False
 
         print()
-        print("ℹ Your fork is not tracking the official Hermes repository.")
+        print("ℹ Your fork is not tracking the official SIYUAN repository.")
         print("  This means you may miss updates from NousResearch/hermes-agent.")
         print()
 
@@ -3464,7 +3464,7 @@ def _format_concurrent_instances_message(
     lines.append(f"  Updating now would fail to overwrite {shim} because")
     lines.append("  Windows blocks REPLACE on a running executable.")
     lines.append("")
-    lines.append("  Close Hermes Desktop, exit any open `hermes` REPLs, and")
+    lines.append("  Close SIYUAN Desktop, exit any open `hermes` REPLs, and")
     lines.append("  stop the gateway (`hermes gateway stop`) before retrying.")
     lines.append("")
     if matches:
@@ -3526,7 +3526,7 @@ def _filter_non_gateway_concurrent_instances(
     ``hermes update``. If every concurrent instance is a gateway, the pause
     machinery (``_pause_windows_gateways_for_update``) and the post-update
     kill+restart block handle it — the update proceeds. If anything else (a
-    TUI shell, a Hermes Desktop backend child, an unrelated ``hermes`` REPL)
+    TUI shell, a SIYUAN Desktop backend child, an unrelated ``hermes`` REPL)
     is in the list, the gate still aborts with the existing message, since
     those have no pause machinery downstream.
     """
@@ -3574,7 +3574,7 @@ def _capture_active_tool_dependencies() -> list[str]:
 
         return tools_config.active_restorable_python_tool_dependencies()
     except Exception as exc:
-        logger.debug("Could not snapshot active Hermes Tools dependencies: %s", exc)
+        logger.debug("Could not snapshot active SIYUAN Tools dependencies: %s", exc)
         return []
 
 
@@ -3597,7 +3597,7 @@ def _restore_active_tool_dependencies(
     try:
         from hermes_cli import tools_config
     except Exception as exc:
-        logger.debug("Hermes Tools dependency restore skipped (import failed): %s", exc)
+        logger.debug("SIYUAN Tools dependency restore skipped (import failed): %s", exc)
         return
 
     target_python = _m()._resolve_install_target_python(install_cmd_prefix, env)
@@ -3633,7 +3633,7 @@ def _restore_active_tool_dependencies(
         return
 
     print()
-    print(f"→ Restoring {len(missing)} Hermes Tools dependency set(s)...")
+    print(f"→ Restoring {len(missing)} SIYUAN Tools dependency set(s)...")
     restored: list[str] = []
     failed: list[tuple[str, str]] = []
     for name, install_args in missing:
@@ -3773,7 +3773,7 @@ def _refresh_active_memory_provider_dependencies() -> None:
 
     Memory-provider bridge packages are declared in each provider's
     ``plugin.yaml`` (plus mode-dependent extras like Hindsight's
-    ``hindsight-all``), NOT in Hermes' editable-install extras or
+    ``hindsight-all``), NOT in SIYUAN' editable-install extras or
     ``LAZY_DEPS`` alone — so the core dependency reinstall above can strip
     or downgrade them (#53272 mem0ai, #70636 hindsight-embed). Re-run the
     provider's declared install for the ACTIVE provider only, after the
@@ -4055,8 +4055,8 @@ def _update_node_dependencies() -> list[str]:
     from hermes_constants import get_default_hermes_root
 
     # This cache describes PROJECT_ROOT/node_modules, which is shared by every
-    # Hermes profile using this checkout. Keep one per-checkout cache under the
-    # shared Hermes root rather than rerunning npm once per named profile.
+    # SIYUAN profile using this checkout. Keep one per-checkout cache under the
+    # shared SIYUAN root rather than rerunning npm once per named profile.
     shared_hermes_root = get_default_hermes_root()
 
     # Best-effort: warm npx's cache for agent-browser (#43564). Runs before
@@ -4464,7 +4464,7 @@ def _ensure_fhs_path_guard() -> None:
 
     path_line = 'export PATH="/usr/local/bin:$PATH"'
     path_comment = (
-        "# Hermes Agent — ensure /usr/local/bin is on PATH " "(RHEL non-login shells)"
+        "# SIYUAN — ensure /usr/local/bin is on PATH " "(RHEL non-login shells)"
     )
     wrote_any = False
     for candidate in (".bashrc", ".bash_profile"):
@@ -4504,7 +4504,7 @@ def _ensure_acp_launcher() -> None:
     (Zed, JetBrains, Buzz Desktop) spawn the agent by resolving the
     ``hermes-acp`` command name against the login-shell PATH; the console
     script of that name lives inside the install's venv, which is not on that
-    PATH, so those hosts report Hermes as not installed even when it is.
+    PATH, so those hosts report SIYUAN as not installed even when it is.
 
     The shim simply delegates to the sibling ``hermes`` launcher with the
     ``acp`` subcommand, which makes it correct for every install layout
@@ -4539,7 +4539,7 @@ def _ensure_acp_launcher() -> None:
                 continue
             shim = (
                 "#!/usr/bin/env bash\n"
-                "# Hermes Agent — ACP launcher (written by `hermes update`).\n"
+                "# SIYUAN — ACP launcher (written by `hermes update`).\n"
                 "# ACP hosts (Zed, JetBrains, Buzz) resolve the agent by this\n"
                 "# command name on the login-shell PATH.\n"
                 f'exec "{hermes_cmd}" acp "$@"\n'
@@ -5001,7 +5001,7 @@ def _detect_venv_python_processes(
         # per-process queries. A busy workstation can have 500+ processes, so
         # querying those fields for every unrelated process can exceed the
         # Desktop preflight watchdog. First collect only cheap identity fields;
-        # fetch cmdline/cwd lazily for plausible Python/uv/Hermes candidates.
+        # fetch cmdline/cwd lazily for plausible Python/uv/SIYUAN candidates.
         proc_iter = psutil.process_iter(["pid", "exe", "name"])
     except Exception:
         return []
@@ -5284,7 +5284,7 @@ def _holder_value_flags() -> frozenset:
 
 
 def _hermes_holder_subcommand(cmdline: str) -> str | None:
-    """The actual Hermes SUBCOMMAND a venv-holder argv runs, or None.
+    """The actual SIYUAN SUBCOMMAND a venv-holder argv runs, or None.
 
     Token-based, never substring (#90778: ``kanban --preserve-cache``
     contained \"serve\" and got labeled as the Desktop backend). Finds the
@@ -5339,10 +5339,10 @@ def _format_venv_python_holders_message(matches: list[tuple[int, str, str]]) -> 
     hint rather than a wrong one.
     """
     lines = [
-        "✗ Other Hermes processes are running from this install's venv:",
+        "✗ Other SIYUAN processes are running from this install's venv:",
     ]
     hint_by_subcommand = {
-        "serve": "  ← Hermes backend (if the Desktop app is open, close it)",
+        "serve": "  ← SIYUAN backend (if the Desktop app is open, close it)",
         "dashboard": "  ← hermes dashboard (stop it: hermes dashboard stop, or close that terminal)",
         "gateway": "  ← gateway",
     }
@@ -5360,7 +5360,7 @@ def _format_venv_python_holders_message(matches: list[tuple[int, str, str]]) -> 
         "  dependency update would fail partway and leave a broken install."
     )
     lines.append(
-        "  Close the Hermes desktop app / other Hermes terminals, then re-run:"
+        "  Close the SIYUAN desktop app / other SIYUAN terminals, then re-run:"
     )
     lines.append("    hermes update")
     lines.append("  (or use `hermes update --force-venv` to proceed anyway at your own risk)")
@@ -5551,7 +5551,7 @@ def _ledger_manual_serve_holders(
     a live process, and its recorded spawner is NOT alive (a Desktop-owned
     backend keeps its live Electron spawner and must keep the refusal — the
     app would respawn what we kill; a PowerShell-launched serve has no live
-    Hermes spawner). Returns the full ledger entries so the relauncher can
+    SIYUAN spawner). Returns the full ledger entries so the relauncher can
     rebuild the launch command from structured host/port/profile instead of
     parsing argv.
     """
@@ -5663,12 +5663,12 @@ def _orphaned_desktop_backend_pids(
     ``serve`` backend still holding the venv at that point is a straggler
     whose supervisor is gone: SIGTERM raced its spawn, or it belongs to a
     crashed window. Nothing will respawn it, and refusing on it dead-ends
-    the update with "Hermes is still running" while the user stares at zero
+    the update with "SIYUAN is still running" while the user stares at zero
     open windows (ryanc's 2026-08-09 01:59/02:17 failures).
 
     A holder qualifies only when BOTH hold:
 
-    - its cmdline is a Hermes backend (``hermes_cli.main`` + ``serve`` /
+    - its cmdline is a SIYUAN backend (``hermes_cli.main`` + ``serve`` /
       ``dashboard``), and
     - its supervising parent is demonstrably gone: the parent PID no longer
       exists, or the PID was reused (parent created *after* the child).
@@ -5816,7 +5816,7 @@ def _ledger_reapable_backend_pids(
 def _handoff_reapable_backend_pids(
     matches: list[tuple[int, str, str]],
 ) -> list[int] | None:
-    """PIDs of Hermes ``serve``/``dashboard`` backends safe to reap during a
+    """PIDs of SIYUAN ``serve``/``dashboard`` backends safe to reap during a
     GUI-updater hand-off, INCLUDING ones with a still-live parent.
 
     Complements ``_orphaned_desktop_backend_pids``, which only reaps backends
@@ -5842,7 +5842,7 @@ def _handoff_reapable_backend_pids(
 
     Guarded conservatively:
 
-    - Only Hermes backends (``hermes_cli.main`` + ``serve``/``dashboard``)
+    - Only SIYUAN backends (``hermes_cli.main`` + ``serve``/``dashboard``)
       from THIS install's venv qualify; a non-backend holder (operator REPL,
       stray script) disqualifies the whole set → ``None`` (keep refusing), so
       we never widen the blast radius during a hand-off.
@@ -5915,7 +5915,7 @@ def _stop_process_trees(
                 expected_start_time=expected_start_time,
             ):
                 logger.debug(
-                    "Skipping taskkill of non-Hermes or changed PID %s",
+                    "Skipping taskkill of non-SIYUAN or changed PID %s",
                     pid,
                 )
                 continue
@@ -6317,7 +6317,7 @@ def _pause_windows_gateways_for_update() -> dict | None:
     # update even though the gateway itself is stopped.
     launcher_pids = _m()._venv_launcher_ancestors(mapped_pids)
 
-    print("→ Stopping Windows gateway process(es) before updating Hermes...")
+    print("→ Stopping Windows gateway process(es) before updating SIYUAN...")
     try:
         drain_timeout = max(float(_get_restart_drain_timeout()), 1.0)
     except Exception:
@@ -7384,7 +7384,7 @@ def _git_is_trampoline(git_cmd: list) -> bool:
 def _portable_git_candidates() -> list:
     """PortableGit candidate paths: shared root first, then profile home.
 
-    The Hermes-managed PortableGit tree lives under the SHARED root
+    The SIYUAN-managed PortableGit tree lives under the SHARED root
     (``<root>/git/...``), not the profile-scoped HERMES_HOME
     (``<root>/profiles/<name>``), so a profile-scoped ``hermes update`` must
     look there (monerostar review, #87876). The profile-home candidate is
@@ -7408,7 +7408,7 @@ def _locate_real_git() -> Optional[Path]:
     (both ~46KB shims) fail to re-exec git-core, while the real binary at
     ``mingw64\\libexec\\git-core\\git.exe`` (≈4.4MB) works when invoked
     directly (#87876). Check the standard Git for Windows locations plus the
-    Hermes-managed PortableGit copy; accept the first candidate that runs and
+    SIYUAN-managed PortableGit copy; accept the first candidate that runs and
     does NOT print the trampoline guard. Returns None when nothing suitable
     is found — callers then keep the broken command and let the existing
     fetch-failure ZIP fallback handle it.
@@ -7675,7 +7675,7 @@ def _rebuild_desktop_after_update(
     # still-settling rebuild window the first wait didn't fully catch — then
     # surface the captured tail so the failure is debuggable.
     #
-    # Start the build subprocess with the Hermes-managed Node on PATH: when
+    # Start the build subprocess with the SIYUAN-managed Node on PATH: when
     # `hermes update` runs inside the desktop updater chain (Desktop →
     # hermes-setup → hermes update), the shell PATH customizations are lost,
     # so a bare-PATH child would fail with `node: not found` before cmd_gui can
@@ -7807,7 +7807,7 @@ def _refuse_update_if_venv_foreign_owned(project_root) -> None:
     if not foreign:
         return
     print("\n✗ Update stopped: this install's venv contains files owned by another user.")
-    print("  Updating now would fail midway (Permission denied) and leave Hermes broken.")
+    print("  Updating now would fail midway (Permission denied) and leave SIYUAN broken.")
     print("  This usually happens after running hermes or pip with sudo. Offending paths:")
     for p, uid in foreign:
         print(f"    - {p} (owner uid {uid})")
@@ -7872,7 +7872,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
             logger.debug("Could not read updates.non_interactive_local_changes: %s", exc)
             discard_local_changes = False
 
-    print("⚕ Updating Hermes Agent...")
+    print("Updating SIYUAN...")
     print()
 
     # Phase 1 (#91277): structured update receipt — record what this run
@@ -7886,7 +7886,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
         logger.debug("Update receipt unavailable: %s", _receipt_exc)
 
     # Plan phase (#91277 Phase 2): snapshot the pre-update fleet — every
-    # running Hermes runtime, its supervisor, and its running code version —
+    # running SIYUAN runtime, its supervisor, and its running code version —
     # into the receipt, so a post-mortem can compare what the update SAW
     # against what it did. Read-only; a probe failure records nothing.
     # ``_pre_update_plan`` is read again AFTER the restart phase to reconcile
@@ -8014,7 +8014,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
                 _venv_holders = _m()._detect_venv_python_processes()
         if _venv_holders:
             # Positive-identity rung (runs FIRST, any update context): holders
-            # the spawn ledger proves are orphaned Hermes backends — the
+            # the spawn ledger proves are orphaned SIYUAN backends — the
             # process self-registered (pid, create_time, purpose, spawner) at
             # startup and its recorded spawner is provably dead. No PPID
             # archaeology, no hand-off contract required.
@@ -8022,7 +8022,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
             if _ledger_backends:
                 print(
                     f"  ⚠ {len(_ledger_backends)} ledger-identified orphaned "
-                    "Hermes backend process(es) hold the venv; stopping their trees"
+                    "SIYUAN backend process(es) hold the venv; stopping their trees"
                 )
                 _m()._stop_process_trees(_ledger_backends)
                 _time.sleep(1.0)
@@ -8035,7 +8035,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
                 # Electron's teardown lost the SIGTERM race, exited, and left
                 # its backend (and any .hermes-runtime child) holding the
                 # venv. Nothing will respawn an orphan, so reap the tree and
-                # re-check instead of dead-ending with "Hermes is still
+                # re-check instead of dead-ending with "SIYUAN is still
                 # running" while no window is open. Backends whose Desktop
                 # is still alive never reach here (_orphaned_desktop_
                 # backend_pids returns None for them) — that path keeps the
@@ -8099,7 +8099,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
             # live parent — which stranded a whole swarm of per-profile
             # backends (the tearing-down Electron parent / the venv
             # launcher→worker chain still mid-exit) and hung the update. In
-            # the hand-off context those surviving Hermes backends are leaks,
+            # the hand-off context those surviving SIYUAN backends are leaks,
             # live parent or not — reap them by cmdline instead of dead-ending.
             _handoff = False
             try:
@@ -8120,7 +8120,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
                 _handoff_backends = _m()._handoff_reapable_backend_pids(_venv_holders)
                 if _handoff_backends:
                     print(
-                        f"  ⚠ {len(_handoff_backends)} Hermes backend process(es) "
+                        f"  ⚠ {len(_handoff_backends)} SIYUAN backend process(es) "
                         "still hold the venv after the Desktop hand-off; "
                         "stopping their trees"
                     )
@@ -8628,7 +8628,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
                     _print_update_completion("✓ Update complete!")
                 else:
                     print(f"⚠ Venv still unhealthy after repair: {detail_after}")
-                    print("  Close all Hermes windows/gateways and re-run: hermes update")
+                    print("  Close all SIYUAN windows/gateways and re-run: hermes update")
             else:
                 _repair_node_deps_on_current_checkout(
                     _print_update_completion,
@@ -8647,7 +8647,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
                     "⚠ Restart required to finish the managed Python runtime repair."
                 )
                 print(
-                    "  Any running Hermes gateways, Desktop backends, or other "
+                    "  Any running SIYUAN gateways, Desktop backends, or other "
                     "long-lived processes still use the previous runtime."
                 )
                 print("  Restart each of them to pick up the repaired runtime.")
@@ -9116,7 +9116,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
         if sys.platform == "darwin" and had_desktop_app_before_update:
             print()
             print(
-                "  ℹ macOS: if Hermes re-prompts for permissions you already "
+                "  ℹ macOS: if SIYUAN re-prompts for permissions you already "
                 "granted (toggle shows ON), the stored grant is stale — run "
                 "`tccutil reset ScreenCapture com.nousresearch.hermes` (repeat "
                 "per affected service), toggle it ON in System Settings, then "
@@ -9365,7 +9365,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
             logger.debug("FHS PATH guard check failed: %s", e)
 
         # Self-heal the hermes-acp launcher for installs that predate it, so
-        # ACP hosts (Zed, JetBrains, Buzz) can resolve Hermes on PATH without
+        # ACP hosts (Zed, JetBrains, Buzz) can resolve SIYUAN on PATH without
         # a reinstall.  No-op on Windows (the launcher migration below owns
         # that) and when already present.
         try:
@@ -9374,7 +9374,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
             logger.debug("hermes-acp launcher self-heal failed: %s", e)
 
         # Migrate the Windows hermes launchers to the managed binary dir
-        # (the default Hermes root's bin, next to the managed uv) and repair
+        # (the default SIYUAN root's bin, next to the managed uv) and repair
         # them if they are missing. Earlier layouts put them inside the git
         # checkout (hermes-agent\bin) or put venv\Scripts itself on PATH; the
         # in-checkout copies were swept by this command's own pre-update
@@ -9383,7 +9383,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
         # stopped resolving in every new terminal. Updates never run
         # install.ps1, so this tail call is how existing installs reach the
         # new layout. No-op on POSIX and on source checkouts (root is not
-        # the managed clone under the default Hermes root).
+        # the managed clone under the default SIYUAN root).
         try:
             from hermes_cli._install_repair import migrate_windows_bin_path
 
@@ -9490,7 +9490,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
         # The code update (git pull) is shared across all profiles, so every
         # running gateway needs restarting to pick up the new code.
         #
-        # Purge stale cached Hermes modules FIRST: the import below pulls
+        # Purge stale cached SIYUAN modules FIRST: the import below pulls
         # freshly-updated gateway source into this pre-update interpreter,
         # and any already-cached sibling module (cli_output, status, ...)
         # that the new source expects a new symbol from would otherwise
@@ -10407,7 +10407,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
             except Exception:
                 pass
 
-        # Warn if legacy Hermes gateway unit files are still installed.
+        # Warn if legacy SIYUAN gateway unit files are still installed.
         # When both hermes.service (from a pre-rename install) and the
         # current hermes-gateway.service are enabled, they SIGTERM-fight
         # for the same bot token (see PR #11909). Flagging here means
@@ -10421,7 +10421,7 @@ def _cmd_update_impl(args, gateway_mode: bool):
 
             if supports_systemd_services() and has_legacy_hermes_units():
                 print()
-                print("⚠ Legacy Hermes gateway unit(s) detected:")
+                print("⚠ Legacy SIYUAN gateway unit(s) detected:")
                 for name, path, is_sys in _find_legacy_hermes_units():
                     scope = "system" if is_sys else "user"
                     print(f"    {path}  ({scope} scope)")

@@ -167,7 +167,7 @@ def _register_direct_openai_provider() -> None:
     if not isinstance(provider_map, dict) or not callable(register_provider):
         raise RuntimeError(
             "mem0 LlmFactory does not support the provider registration required "
-            "for the Hermes OpenAI OSS backend"
+            "for the SIYUAN OpenAI OSS backend"
         )
 
     registration = (_DIRECT_OPENAI_CLASS_PATH, OpenAIConfig)
@@ -242,7 +242,7 @@ class OSSBackend(Mem0Backend):
             except (AttributeError, TypeError) as exc:
                 raise RuntimeError(
                     "mem0 MemoryConfig does not expose a mutable llm.provider "
-                    "for the Hermes OpenAI OSS backend"
+                    "for the SIYUAN OpenAI OSS backend"
                 ) from exc
             self._memory = Memory(memory_config)
         else:

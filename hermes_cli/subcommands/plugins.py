@@ -15,7 +15,7 @@ def build_plugins_parser(subparsers, *, cmd_plugins: Callable) -> None:
         "plugins",
         help="Manage and validate plugins",
         description=(
-            "Install, update, remove, list, or validate native Hermes plugins "
+            "Install, update, remove, list, or validate native SIYUAN plugins "
             "and portable Agent Plugins v1 packages. Portable packages install disabled."
         ),
     )

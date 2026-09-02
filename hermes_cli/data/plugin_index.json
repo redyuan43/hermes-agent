@@ -4,7 +4,7 @@
   "plugins": [
     {
       "name": "hermes-media-studio",
-      "description": "Media Studio — generative media workspace plugin for Hermes Desktop (fal + Krea, durable job queue, library).",
+      "description": "Media Studio — generative media workspace plugin for SIYUAN Desktop (fal + Krea, durable job queue, library).",
       "author": "NousResearch",
       "tags": ["media", "image-gen", "video-gen", "dashboard", "desktop"],
       "repo": "NousResearch/hermes-media-studio",

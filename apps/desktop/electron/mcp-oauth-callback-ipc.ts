@@ -20,7 +20,7 @@
  *   - the listener only ever RECEIVES `code`/`state` query params and
  *     forwards them to the renderer; no tokens are exchanged here — the
  *     gateway verifies `state` (constant-time) before redeeming anything;
- *   - the browser sees only a minimal "return to Hermes" page.
+ *   - the browser sees only a minimal "return to SIYUAN" page.
  */
 
 import http from 'node:http'
@@ -35,7 +35,7 @@ const DONE_HTML =
   '<!doctype html><meta charset="utf-8"><title>Authorization received</title>' +
   '<body style="font:15px system-ui;margin:3rem;text-align:center">' +
   '<h2>&#10003; Authorization received</h2>' +
-  '<p>You can close this window and return to Hermes.</p>' +
+  '<p>You can close this window and return to SIYUAN.</p>' +
   '<script>setTimeout(()=>window.close(),800)</script>'
 
 interface CallbackResult {

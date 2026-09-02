@@ -263,7 +263,7 @@ def _read_manifest(root: Path) -> dict[str, Any]:
     path = root / "manifest.json"
     if not path.exists():
         raise ValueError(
-            "archive is not a Hermes kanban board export (no manifest.json)"
+            "archive is not a SIYUAN kanban board export (no manifest.json)"
         )
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))
@@ -271,14 +271,14 @@ def _read_manifest(root: Path) -> dict[str, Any]:
         raise ValueError(f"archive manifest is not valid JSON: {exc}") from exc
     if not isinstance(manifest, dict) or manifest.get("format") != ARCHIVE_FORMAT:
         raise ValueError(
-            "archive is not a Hermes kanban board export "
+            "archive is not a SIYUAN kanban board export "
             f"(format={manifest.get('format') if isinstance(manifest, dict) else None!r})"
         )
     version = manifest.get("format_version")
     if not isinstance(version, int) or version > ARCHIVE_FORMAT_VERSION:
         raise ValueError(
-            f"archive format version {version!r} is newer than this Hermes "
-            f"understands (max {ARCHIVE_FORMAT_VERSION}) — update Hermes and retry"
+            f"archive format version {version!r} is newer than this SIYUAN "
+            f"understands (max {ARCHIVE_FORMAT_VERSION}) — update SIYUAN and retry"
         )
     return manifest
 

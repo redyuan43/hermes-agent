@@ -555,7 +555,7 @@ TOOL_CATEGORIES = {
         "name": "X (Twitter) Search",
         "setup_title": "Select xAI Credential Source",
         "setup_note": (
-            "Hermes routes X searches through xAI's built-in x_search "
+            "SIYUAN routes X searches through xAI's built-in x_search "
             "Responses tool for read-only public X discovery. Use the xurl "
             "skill for authenticated X API reads and account actions. Both "
             "credential sources hit the same "
@@ -621,7 +621,7 @@ TOOL_CATEGORIES = {
             {
                 "name": "Lightpanda",
                 "badge": "free · local · no Chromium",
-                "tag": "Zig headless browser spawned by Hermes, text-only (no screenshots)",
+                "tag": "Zig headless browser spawned by SIYUAN, text-only (no screenshots)",
                 "env_vars": [],
                 "browser_provider": "local",
                 "browser_engine": "lightpanda",
@@ -1120,7 +1120,7 @@ def install_cua_driver(
         version = contract.get("version") or "unknown version"
         reason = contract.get("reason") or "required runtime features are missing"
         _print_warning(
-            f"    Found cua-driver {version}, but Hermes cannot use its current "
+            f"    Found cua-driver {version}, but SIYUAN cannot use its current "
             f"runtime contract: {reason}."
         )
         if os.environ.get("HERMES_CUA_DRIVER_CMD", "").strip():
@@ -5658,7 +5658,7 @@ def tools_command(args=None, first_install: bool = False, config: dict = None):
                 print(color("    (none enabled)", Colors.DIM))
         print()
         return
-    print(color("⚕ Hermes Tool Configuration", Colors.CYAN, Colors.BOLD))
+    print(color("SIYUAN Tool Configuration", Colors.CYAN, Colors.BOLD))
     print(color("  Enable or disable tools per platform.", Colors.DIM))
     print(color("  Tools that need API keys will be configured when enabled.", Colors.DIM))
     print(color("  Guide: https://hermes-agent.nousresearch.com/docs/user-guide/features/tools", Colors.DIM))

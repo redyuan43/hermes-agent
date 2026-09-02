@@ -29,9 +29,9 @@ export function hasValidBootstrapMarker(
 }
 
 // The active install at ~/.hermes/hermes-agent can be real and runnable even if
-// Desktop never wrote its first-run bootstrap marker (for example when Hermes
+// Desktop never wrote its first-run bootstrap marker (for example when SIYUAN
 // was installed by the CLI first, or when a past desktop build forgot the
-// marker). Runtime usability is authoritative for "can we launch local Hermes
+// marker). Runtime usability is authoritative for "can we launch local SIYUAN
 // right now?"; the marker is only provenance about how that install was
 // created. A missing/stale marker must never force a healthy local install into
 // the first-run bootstrap UI.

@@ -4396,7 +4396,7 @@ class PluginManager:
         stale_relay_keys = legacy_relay_plugin_keys(enabled)
         if stale_relay_keys:
             logger.warning(
-                "Removed Hermes plugin %s is still listed in plugins.enabled; "
+                "Removed SIYUAN plugin %s is still listed in plugins.enabled; "
                 "remove it and configure native Relay plugins with %s",
                 ", ".join(stale_relay_keys),
                 RELAY_PLUGINS_CONFIG_ENV,
@@ -4425,7 +4425,7 @@ class PluginManager:
                 )
                 self._plugins[lookup_key] = loaded
                 logger.warning(
-                    "Refusing to load removed Hermes Relay plugin '%s'; %s",
+                    "Refusing to load removed SIYUAN Relay plugin '%s'; %s",
                     lookup_key,
                     loaded.error,
                 )
@@ -5200,7 +5200,7 @@ class PluginManager:
         if missing:
             logger.warning(
                 "Plugin %s declares Python dependencies that are not "
-                "installed: %s. Hermes does not install plugin dependencies "
+                "installed: %s. SIYUAN does not install plugin dependencies "
                 "automatically; install them yourself, e.g.: pip install %s",
                 key, ", ".join(missing),
                 " ".join(f"'{m}'" for m in missing),

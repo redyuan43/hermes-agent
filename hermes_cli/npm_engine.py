@@ -13,12 +13,12 @@ an ``npm --version`` probe before work that usually succeeds), we react to it:
 npm states the required range in the error, so the recovery reads the
 constraint straight out of the output it just produced.
 
-Scope of the repair is deliberately narrow. Hermes only upgrades an npm that
+Scope of the repair is deliberately narrow. SIYUAN only upgrades an npm that
 lives inside its **own** managed Node tree (``$HERMES_HOME/node``), installing
 in place with ``--prefix`` so ``bin/npm`` keeps resolving to the upgraded
 ``lib/node_modules/npm``. A system / nvm / brew / Nix npm belongs to the user
-and their other projects; Hermes never modifies those. When the failing npm is
-one of those foreign installs, Hermes instead provisions its own managed Node
+and their other projects; SIYUAN never modifies those. When the failing npm is
+one of those foreign installs, SIYUAN instead provisions its own managed Node
 tree (the same tree a fresh install creates), upgrades *that* npm into range,
 and hands the caller the managed npm to retry with — leaving the user's
 toolchain untouched.
@@ -134,7 +134,7 @@ def _repo_npm_range() -> str | None:
 
 
 def managed_npm_prefix(npm: str | os.PathLike[str] | None) -> Path | None:
-    """Return the Hermes-managed Node root *npm* lives in, else ``None``.
+    """Return the SIYUAN-managed Node root *npm* lives in, else ``None``.
 
     Symlinks are resolved first: an install links ``~/.local/bin/npm`` at
     ``$HERMES_HOME/node/bin/npm``, which itself links into
@@ -182,7 +182,7 @@ def upgrade_managed_npm(
     """
     if not quiet:
         print(
-            f"→ Upgrading Hermes-managed npm to satisfy {npm_range}…",
+            f"→ Upgrading SIYUAN-managed npm to satisfy {npm_range}…",
             flush=True,
         )
     # The managed npm lives inside the very tree the desktop app's Node
@@ -193,7 +193,7 @@ def upgrade_managed_npm(
     if managed_node_tree_in_use():
         if not quiet:
             print(
-                "  ⚠ deferred: the Hermes-managed Node.js tree is in use by a "
+                "  ⚠ deferred: the SIYUAN-managed Node.js tree is in use by a "
                 "running app; the npm upgrade will apply on a later update "
                 "once the app is closed.",
                 file=sys.stderr,
@@ -264,7 +264,7 @@ def _print_manual_fix(npm: str, npm_range: str, actual: str | None) -> None:
     print(
         f"\n✗ {have}does not satisfy the range this project requires: {npm_range}\n"
         f"  Resolved npm: {npm}\n"
-        "  Hermes could not provision its own Node.js runtime and never\n"
+        "  SIYUAN could not provision its own Node.js runtime and never\n"
         "  modifies a system/nvm/brew/Nix npm. Upgrade yours yourself with:\n"
         f'      npm install -g npm@"{npm_range}"',
         file=sys.stderr,
@@ -272,7 +272,7 @@ def _print_manual_fix(npm: str, npm_range: str, actual: str | None) -> None:
 
 
 def _provision_managed_npm(npm_range: str | None, *, quiet: bool = False) -> str | None:
-    """Provision a Hermes-managed Node tree and return a satisfying npm.
+    """Provision a SIYUAN-managed Node tree and return a satisfying npm.
 
     Installs the managed tree under ``$HERMES_HOME/node`` (reusing a healthy
     one when present), then upgrades its bundled npm to *npm_range* — a fresh
@@ -284,7 +284,7 @@ def _provision_managed_npm(npm_range: str | None, *, quiet: bool = False) -> str
     """
     if not quiet:
         print(
-            "→ Provisioning a Hermes-managed Node.js runtime "
+            "→ Provisioning a SIYUAN-managed Node.js runtime "
             "(the resolved npm belongs to your system and is left alone)…",
             flush=True,
         )
@@ -316,7 +316,7 @@ def maybe_repair_npm_engine(
 
     *output* is the combined stdout/stderr of the npm command that just failed.
     Returns the npm executable the caller should retry its command with —
-    the same *npm* after an in-place upgrade of a Hermes-managed install, or
+    the same *npm* after an in-place upgrade of a SIYUAN-managed install, or
     a freshly provisioned managed npm when the failing npm belongs to the
     user (system / nvm / brew / Nix installs are never modified). Returns
     ``None`` when no repair happened — not an engine failure, a Node mismatch
@@ -334,7 +334,7 @@ def maybe_repair_npm_engine(
     prefix = managed_npm_prefix(npm)
 
     if prefix is not None:
-        # Hermes owns this npm — upgrade it in place. Only an npm-range
+        # SIYUAN owns this npm — upgrade it in place. Only an npm-range
         # failure is fixable this way; a Node mismatch needs a Node upgrade.
         if not npm_range:
             return None

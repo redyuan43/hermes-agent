@@ -1,5 +1,5 @@
 /**
- * Routines: the Hermes cron jobs scoped to the bot you're chatting with — the
+ * Routines: the SIYUAN cron jobs scoped to the bot you're chatting with — the
  * list query and its owner resolution, the schedule picker, the create and
  * detail dialogs, and the pane the right tile renders.
  */
@@ -560,7 +560,7 @@ export function RoutineRow({ job, onOpen, owner }: RoutineRowProps) {
 
 // Structured schedule picker: frequency first, then only the detail that
 // frequency needs (time of day, weekday, day of month, interval). Emits a
-// Hermes-native schedule string; Advanced exposes it raw.
+// SIYUAN-native schedule string; Advanced exposes it raw.
 type ScheduleFreq = 'once' | 'hourly' | 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'interval' | 'advanced'
 
 /** Picker form state. Every detail field stays a string: they are edited as
@@ -620,7 +620,7 @@ const TIMES = (() => {
   return out
 })()
 
-/** Compose the Hermes schedule string from picker state. */
+/** Compose the SIYUAN schedule string from picker state. */
 function composeSchedule(state: ScheduleState): string {
   const [h, m] = (state.time || '9:0').split(':').map(Number)
 

@@ -6741,7 +6741,7 @@ def validate_requested_model(
                 "recognized": False,
                 "message": (
                     f"Note: could not reach this Ollama endpoint's `/api/tags` model listing to validate `{requested}`. "
-                    "Hermes will save the model name, but local Ollama model discovery could not verify it."
+                    "SIYUAN will save the model name, but local Ollama model discovery could not verify it."
                 ),
             }
         if requested_for_lookup in set(ollama_models):
@@ -6828,7 +6828,7 @@ def validate_requested_model(
 
         message = (
             f"Note: could not reach this custom endpoint's model listing at `{probe.get('probed_url')}`. "
-            f"Hermes will still save `{requested}`, but the endpoint should expose `/models` for verification."
+            f"SIYUAN will still save `{requested}`, but the endpoint should expose `/models` for verification."
         )
         if api_mode == "anthropic_messages":
             message += (
@@ -6995,7 +6995,7 @@ def validate_requested_model(
                 "message": (
                     f"Note: `{requested}` was not found in the MiniMax catalog."
                     f"{suggestion_text}"
-                    "\n  MiniMax does not expose a /models endpoint, so Hermes cannot verify the model name."
+                    "\n  MiniMax does not expose a /models endpoint, so SIYUAN cannot verify the model name."
                     "\n  The model may still work if it exists on the server."
                 ),
             }

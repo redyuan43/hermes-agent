@@ -113,7 +113,7 @@ function execProbeSync(
 }
 
 /**
- * Return the Python snippet used to verify Hermes can import far enough to
+ * Return the Python snippet used to verify SIYUAN can import far enough to
  * launch the CLI. Kept exported for tests so dependency regressions are
  * caught without needing a real broken venv fixture.
  *
@@ -124,7 +124,7 @@ function hermesRuntimeImportProbe() {
 }
 
 /**
- * Return true iff the Hermes runtime import probe exits 0.
+ * Return true iff the SIYUAN runtime import probe exits 0.
  *
  * Used to gate the "fallback to system Python with hermes_cli installed"
  * rung of resolveHermesBackend. Without this, a system Python 3.11-3.13
@@ -183,7 +183,7 @@ function canImportHermesCli(pythonPath: string, opts: { env?: Record<string, str
 /**
  * An explicit desktop backend command is a deployment contract, not a PATH
  * discovery candidate. In particular, the Nix desktop wrapper points this at
- * its immutable, matching Hermes package; it must never fall through to the
+ * its immutable, matching SIYUAN package; it must never fall through to the
  * mutable install-script bootstrap path if a best-effort probe is slow.
  */
 function shouldTrustHermesOverride(hermesOverride?: string) {

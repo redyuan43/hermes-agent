@@ -1,9 +1,9 @@
 """
-Buzz Platform Adapter for Hermes Agent.
+Buzz Platform Adapter for SIYUAN.
 
 A plugin-based gateway adapter that connects to a Buzz community relay
 (Block's open-source human+agent collaboration platform, built on the
-Nostr protocol) and relays messages to/from the Hermes agent.
+Nostr protocol) and relays messages to/from the SIYUAN agent.
 
 The adapter does not speak Nostr itself — it shells out to the ``buzz``
 CLI binary ("JSON in, JSON out") via ``asyncio.create_subprocess_exec``.
@@ -201,7 +201,7 @@ def _escape_unresolved_presentation_mention(content: str, error: str) -> Optiona
     """Make one CLI-rejected ``@name`` token presentation-only.
 
     Buzz resolves whitespace-prefixed ``@name`` tokens into notification
-    p-tags before signing or publishing. Ordinary prose such as a Hermes
+    p-tags before signing or publishing. Ordinary prose such as a SIYUAN
     ``@session:...`` link can therefore fail mention preflight. Insert an
     invisible separator only after the rejected ``@`` so the rendered text
     remains readable while valid member mentions remain unchanged.
@@ -1242,8 +1242,8 @@ class BuzzAdapter(BasePlatformAdapter):
         Fizz) and the name must be followed by a non-word character or
         end-of-text ("@Riley!!" tags Riley; "@FizzBuzz" does NOT tag a
         member named Fizz).  Longer names match first and consume their
-        span, so "@Hermes Matt" prefers the member "Hermes Matt" over a
-        member "Hermes".
+        span, so "@SIYUAN Matt" prefers the member "SIYUAN Matt" over a
+        member "SIYUAN".
 
         Duplicate display names are ambiguous: the span is consumed but no
         one is tagged (presentation-only), mirroring how Buzz treats
@@ -3311,7 +3311,7 @@ def interactive_setup() -> None:
         if not prompt_yes_no("Reconfigure Buzz?", False):
             return
 
-    print_info("Connect Hermes to a Buzz community (Block's Nostr-based human+agent platform).")
+    print_info("Connect SIYUAN to a Buzz community (Block's Nostr-based human+agent platform).")
     print_info("   Requires the buzz CLI binary and a Nostr key that is a community member.")
     print()
 
@@ -3365,7 +3365,7 @@ def interactive_setup() -> None:
 
 
 def register(ctx):
-    """Plugin entry point: called by the Hermes plugin system."""
+    """Plugin entry point: called by the SIYUAN plugin system."""
     ctx.register_platform(
         name="buzz",
         label="Buzz",

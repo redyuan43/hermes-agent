@@ -156,7 +156,7 @@ def _check_local_runtime() -> tuple[bool, str | None]:
 
     On older CPUs, importing the local Hindsight stack can raise a runtime
     error from NumPy before the daemon starts. Treat that as "unavailable"
-    so Hermes can degrade gracefully instead of repeatedly trying to start
+    so SIYUAN can degrade gracefully instead of repeatedly trying to start
     a broken local memory backend.
 
     The embedded daemon computes embeddings via ``sentence_transformers``
@@ -556,7 +556,7 @@ def _utc_timestamp() -> str:
 
 
 def _event_timestamp() -> str:
-    """Return the configured Hermes event time with an explicit UTC offset."""
+    """Return the configured SIYUAN event time with an explicit UTC offset."""
     event_time = _hermes_now()
     # hermes_time.now() guarantees an aware datetime. Keep this fallback so a
     # replacement clock cannot silently emit an offset-less Hindsight Event Date.
@@ -566,7 +566,7 @@ def _event_timestamp() -> str:
 
 
 def _embedded_profile_name(config: dict[str, Any]) -> str:
-    """Return the Hindsight embedded profile name for this Hermes config."""
+    """Return the Hindsight embedded profile name for this SIYUAN config."""
     profile = config.get("profile", "hermes")
     return str(profile or "hermes")
 
@@ -577,7 +577,7 @@ def _load_simple_env(path) -> dict[str, str]:
         return {}
 
     values: dict[str, str] = {}
-    # utf-8-sig, not plain utf-8: this is also used on the Hermes .env during
+    # utf-8-sig, not plain utf-8: this is also used on the SIYUAN .env during
     # post_setup, and a Notepad BOM would otherwise stick to the first key.
     for line in path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
         if not line or line.startswith("#") or "=" not in line:
@@ -714,8 +714,8 @@ def _resolve_bank_id_template(template: str, fallback: str, **placeholders: str)
     """Resolve a bank_id template string with the given placeholders.
 
     Supported placeholders (each is sanitized before substitution):
-      {profile}   — active Hermes profile name (from agent_identity)
-      {workspace} — Hermes workspace name (from agent_workspace)
+      {profile}   — active SIYUAN profile name (from agent_identity)
+      {workspace} — SIYUAN workspace name (from agent_workspace)
       {platform}  — "cli", "telegram", "discord", etc.
       {user}      — platform user id (gateway sessions)
       {session}   — current session id
@@ -855,7 +855,7 @@ class HindsightMemoryProvider(MemoryProvider):
         # path.
         self._prefetch_waits_for_retain = True
         self._prefetch_retain_drain_timeout = 10.0
-        self._retain_context = "conversation between Hermes Agent and the User"
+        self._retain_context = "conversation between SIYUAN and the User"
         self._turn_counter = 0
         self._session_turns: list[str] = []  # accumulates ALL turns for the session
         # How many turns the last append-mode retain already shipped. Used to
@@ -1166,7 +1166,7 @@ class HindsightMemoryProvider(MemoryProvider):
         print("\n  Start a new session to activate.\n")
 
     def _offer_starter_template(self, mode: str, provider_config: dict, env_writes: dict) -> None:
-        """Offer to seed the bank with a Hermes starter template (best-effort)."""
+        """Offer to seed the bank with a SIYUAN starter template (best-effort)."""
         from hermes_cli.memory_setup import _CANCELLED, _curses_select
 
         from . import templates as _hs_templates
@@ -1221,7 +1221,7 @@ class HindsightMemoryProvider(MemoryProvider):
             {"key": "retain_async","description": "Process retain asynchronously on the Hindsight server", "default": True},
             {"key": "prefetch_waits_for_retain", "description": "Have the background next-turn prefetch wait for the just-completed retain to become recall-visible on the server (local queue drain + async operation completion) before recalling, so recall includes the just-completed turn (runs off the reply path, adds no response latency)", "default": True},
             {"key": "prefetch_retain_drain_timeout", "description": "Max seconds the background prefetch waits for the retain to become recall-visible (queue drain + server-side completion) before recalling anyway", "default": 10.0},
-            {"key": "retain_context", "description": "Context label for retained memories", "default": "conversation between Hermes Agent and the User"},
+            {"key": "retain_context", "description": "Context label for retained memories", "default": "conversation between SIYUAN and the User"},
             {"key": "recall_max_tokens", "description": "Maximum tokens for recall results", "default": 4096},
             {"key": "recall_max_input_chars", "description": "Maximum input query length for auto-recall", "default": 800},
             {"key": "recall_prompt_preamble", "description": "Custom preamble for recalled memories in context"},
@@ -1717,7 +1717,7 @@ class HindsightMemoryProvider(MemoryProvider):
         # Retain controls
         self._auto_retain = self._config.get("auto_retain", True)
         self._retain_every_n_turns = max(1, int(self._config.get("retain_every_n_turns", 1)))
-        self._retain_context = self._config.get("retain_context", "conversation between Hermes Agent and the User")
+        self._retain_context = self._config.get("retain_context", "conversation between SIYUAN and the User")
 
         # Recall controls
         self._auto_recall = self._config.get("auto_recall", True)
@@ -1736,7 +1736,7 @@ class HindsightMemoryProvider(MemoryProvider):
             self._recall_types = list(configured_types) or ["observation"]
         self._recall_prompt_preamble = self._config.get("recall_prompt_preamble", "")
         # On-by-default deterministic indicator: when auto-recall injects memory,
-        # Hermes emits a "👁️ Hindsight — recalled N memories" status line so the
+        # SIYUAN emits a "👁️ Hindsight — recalled N memories" status line so the
         # user SEES memory working, independent of whether the model mentions it.
         # Off switch for customer-facing agents that shouldn't surface internals.
         self._recall_indicator = bool(self._config.get("recall_indicator", True))
@@ -1782,13 +1782,13 @@ class HindsightMemoryProvider(MemoryProvider):
                 msg = (
                     "Hindsight local_embedded mode cannot run as root "
                     "(PostgreSQL initdb refuses root). Skipping the embedded "
-                    "memory daemon. Run Hermes as a non-root user, or switch "
+                    "memory daemon. Run SIYUAN as a non-root user, or switch "
                     "to cloud / local_external mode via 'hermes memory setup'."
                 )
                 logger.warning(msg)
                 # Surface to the terminal too — a daemon that never starts
                 # would otherwise fail silently and the user would only see
-                # Hermes get sluggish. (issue #13125)
+                # SIYUAN get sluggish. (issue #13125)
                 try:
                     print(f"  ⚠ {msg}", file=sys.stderr, flush=True)
                 except Exception:
@@ -2431,7 +2431,7 @@ class HindsightMemoryProvider(MemoryProvider):
             try:
                 if self._mode == "local_embedded":
                     # HindsightEmbedded.close() delegates to its sync client.close().
-                    # When Hermes created/used that client on the shared async loop,
+                    # When SIYUAN created/used that client on the shared async loop,
                     # closing it from this thread can raise "attached to a different
                     # loop" before aiohttp releases the session. Close the embedded
                     # inner async client on the shared loop first, then let the

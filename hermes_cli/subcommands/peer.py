@@ -1,6 +1,6 @@
 """``hermes peer`` — bot-to-bot DMs across machines/gateways.
 
-A *peer* is another Hermes gateway (any machine: homelab, Spark, Hermes
+A *peer* is another SIYUAN gateway (any machine: homelab, Spark, SIYUAN
 Cloud) running the ``api_server`` platform. Registering it here gives every
 bot on THIS machine a transport to message bots on THAT machine:
 
@@ -444,9 +444,9 @@ def build_peer_parser(subparsers) -> None:
     """Attach the ``peer`` subcommand to ``subparsers``."""
     parser = subparsers.add_parser(
         "peer",
-        help="Bot-to-bot DMs across machines (peer Hermes gateways)",
+        help="Bot-to-bot DMs across machines (peer SIYUAN gateways)",
         description=(
-            "Register other Hermes gateways as peers and message their agents. "
+            "Register other SIYUAN gateways as peers and message their agents. "
             "'hermes peer dm <peer>[/<agent>] \"...\"' delivers into the remote "
             "agent's canonical Bot Chat over the peer's API server and prints "
             "the reply — the cross-machine twin of 'hermes -p <bot> chat'. "

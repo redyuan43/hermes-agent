@@ -1,8 +1,8 @@
 """
-IRC Platform Adapter for Hermes Agent.
+IRC Platform Adapter for SIYUAN.
 
 A plugin-based gateway adapter that connects to an IRC server and relays
-messages to/from the Hermes agent.  Zero external dependencies — uses
+messages to/from the SIYUAN agent.  Zero external dependencies — uses
 Python's stdlib asyncio for the IRC protocol.
 
 Configuration in config.yaml::
@@ -217,7 +217,7 @@ class IRCAdapter(BasePlatformAdapter):
         if self.server_password:
             await self._send_raw(f"PASS {self.server_password}")
         await self._send_raw(f"NICK {self.nickname}")
-        await self._send_raw(f"USER {self.nickname} 0 * :Hermes Agent")
+        await self._send_raw(f"USER {self.nickname} 0 * :SIYUAN")
 
         # Start receive loop
         self._recv_task = asyncio.create_task(self._receive_loop())
@@ -257,7 +257,7 @@ class IRCAdapter(BasePlatformAdapter):
         self._mark_disconnected()
         if self._writer and not self._writer.is_closing():
             try:
-                await self._send_raw("QUIT :Hermes Agent shutting down")
+                await self._send_raw("QUIT :SIYUAN shutting down")
                 await asyncio.sleep(0.5)
             except Exception:
                 pass
@@ -585,7 +585,7 @@ def interactive_setup() -> None:
         if not prompt_yes_no("Reconfigure IRC?", False):
             return
 
-    print_info("Connect Hermes to an IRC network. Uses Python stdlib — no extra packages needed.")
+    print_info("Connect SIYUAN to an IRC network. Uses Python stdlib — no extra packages needed.")
     print_info("   Works with Libera.Chat, OFTC, your own ZNC/InspIRCd, etc.")
     print()
 
@@ -826,7 +826,7 @@ async def _standalone_send(
         if server_password:
             await _raw(f"PASS {_strip_irc_control_chars(server_password)}")
         await _raw(f"NICK {standalone_nick}")
-        await _raw(f"USER {standalone_nick} 0 * :Hermes Agent (cron)")
+        await _raw(f"USER {standalone_nick} 0 * :SIYUAN (cron)")
 
         loop = asyncio.get_running_loop()
         deadline = loop.time() + 15.0
@@ -953,7 +953,7 @@ async def _standalone_send(
 
 
 def register(ctx):
-    """Plugin entry point: called by the Hermes plugin system."""
+    """Plugin entry point: called by the SIYUAN plugin system."""
     ctx.register_platform(
         name="irc",
         label="IRC",

@@ -5,7 +5,7 @@ version: 1.0.0
 description: >
   Local authenticated ingress for short voice turns. Accepts standard WAV or
   a device codec such as C.ONE raw Opus packets, normalizes the audio, and
-  dispatches it into the connected Weixin adapter so Hermes owns STT, session
+  dispatches it into the connected Weixin adapter so SIYUAN owns STT, session
   context, tools, and replies. HTTP 202 uses at-most-once process-local
   dispatch; it is not a durable execution queue.
 author: SIYUAN NOTE

@@ -1,4 +1,4 @@
-"""Relay subscriber for the persisted Hermes shared-metrics slice."""
+"""Relay subscriber for the persisted SIYUAN shared-metrics slice."""
 
 from __future__ import annotations
 
@@ -95,7 +95,7 @@ class SharedMetricsSubscriber:
                     )
             except Exception:
                 logger.warning(
-                    "Unable to persist the Hermes shared metric: %s",
+                    "Unable to persist the SIYUAN shared metric: %s",
                     metric_name,
                     exc_info=True,
                 )

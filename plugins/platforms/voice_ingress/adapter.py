@@ -491,7 +491,7 @@ class VoiceIngressAdapter(BasePlatformAdapter):
             os.replace(marker_temp, marker)
             loop = self._loop
             if loop is None or not loop.is_running():
-                raise RuntimeError("Hermes gateway loop is unavailable")
+                raise RuntimeError("SIYUAN gateway loop is unavailable")
             future = asyncio.run_coroutine_threadsafe(
                 self._dispatch(request_id, source_id, wav_path),
                 loop,
@@ -500,7 +500,7 @@ class VoiceIngressAdapter(BasePlatformAdapter):
                 future.result(timeout=10)
             except FuturesTimeout as exc:
                 future.cancel()
-                raise TimeoutError("Hermes gateway event loop timed out") from exc
+                raise TimeoutError("SIYUAN gateway event loop timed out") from exc
             with self._requests_changed:
                 self._remember_accepted_locked(request_id, request_fingerprint)
                 self._requests_changed.notify_all()
@@ -530,7 +530,7 @@ class VoiceIngressAdapter(BasePlatformAdapter):
         authorize = getattr(runner, "_is_user_authorized", None)
         if not callable(authorize) or not authorize(source):
             raise VoiceIngressAuthorizationError(
-                "configured Weixin target is not authorized by Hermes",
+                "configured Weixin target is not authorized by SIYUAN",
             )
         event = MessageEvent(
             text="",
@@ -647,14 +647,14 @@ class VoiceIngressAdapter(BasePlatformAdapter):
                 saved["required_token_updated_at"] = float(token_updated_at)
                 saved["waiting_since"] = time.time()
                 saved["retry_count"] = 0
-                saved["error"] = "请先给 Hermes 发一条微信消息，系统会自动补发"
+                saved["error"] = "请先给 SIYUAN 发一条微信消息，系统会自动补发"
             elif stage in {"failed", "cancelled", "interrupted"}:
                 supplied_error = payload.get("error")
                 saved["error"] = (
                     supplied_error.strip()
                     if isinstance(supplied_error, str) and supplied_error.strip()
                     else {
-                        "failed": "Hermes 回复未能送达",
+                        "failed": "SIYUAN 回复未能送达",
                         "cancelled": "处理已取消",
                         "interrupted": "服务重启，处理已中断",
                     }[stage]

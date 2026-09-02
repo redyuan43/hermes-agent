@@ -1,5 +1,5 @@
 """
-Interactive setup wizard for Hermes Agent.
+Interactive setup wizard for SIYUAN.
 
 Modular wizard with independently-runnable sections:
   1. Model & Provider — choose your AI provider and model
@@ -187,13 +187,13 @@ def is_interactive_stdin() -> bool:
 def print_noninteractive_setup_guidance(reason: str | None = None) -> None:
     """Print guidance for headless/non-interactive setup flows."""
     print()
-    print(color("⚕ Hermes Setup — Non-interactive mode", Colors.CYAN, Colors.BOLD))
+    print(color("SIYUAN Setup — Non-interactive mode", Colors.CYAN, Colors.BOLD))
     print()
     if reason:
         print_info(reason)
     print_info("The interactive wizard cannot be used here.")
     print()
-    print_info("Configure Hermes using environment variables or config commands:")
+    print_info("Configure SIYUAN using environment variables or config commands:")
     print_info("  hermes config set model.provider custom")
     print_info("  hermes config set model.base_url http://localhost:8080/v1")
     print_info("  hermes config set model.default your-model-name")
@@ -487,7 +487,7 @@ def _print_setup_summary(config: dict, hermes_home):
         _provider_ready = False
     if not _provider_ready:
         print()
-        print_warning("No inference provider is configured — Hermes cannot chat yet.")
+        print_warning("No inference provider is configured — SIYUAN cannot chat yet.")
         print_info("  Finish this one step with either of:")
         print_info("    hermes model            (pick any provider/model)")
         print_info("    hermes setup --portal   (Nous Portal OAuth, no API key)")
@@ -1261,7 +1261,7 @@ def _setup_tts_provider(config: dict):
 
     elif selected == "xai":
         # Resolution order: existing OAuth tokens (free for SuperGrok subscribers
-        # via the Hermes auth store) > existing XAI_API_KEY > prompt the user.
+        # via the SIYUAN auth store) > existing XAI_API_KEY > prompt the user.
         # When neither is configured, offer both options instead of forcing the
         # API-key path — xAI TTS works fine with OAuth bearer tokens too.
         oauth_logged_in = _xai_oauth_logged_in_for_setup()
@@ -1402,7 +1402,7 @@ def setup_terminal_backend(config: dict):
     """Configure the terminal execution backend."""
     import platform as _platform
     print_header("Terminal Backend")
-    print_info("Choose where Hermes runs shell commands and code.")
+    print_info("Choose where SIYUAN runs shell commands and code.")
     print_info("This affects tool execution, file access, and isolation.")
     print_info(f"   Guide: {_DOCS_BASE}/user-guide/configuration#terminal-backend-configuration")
     print()
@@ -1662,7 +1662,7 @@ def setup_terminal_backend(config: dict):
             import subprocess
 
             # Managed uv first: $HERMES_HOME/bin is never on PATH, so a bare
-            # which() misses the uv Hermes installed. Bootstrapping one is
+            # which() misses the uv SIYUAN installed. Bootstrapping one is
             # welcome here — this is the interactive setup wizard, already
             # mid-install, and the alternative tier is a pip that a `uv venv`
             # venv may not even have.
@@ -2114,7 +2114,7 @@ def _setup_telegram():
         print_info("⚠️  No allowlist set - anyone who finds your bot can use it!")
 
     print()
-    print_info("📬 Home Channel: where Hermes delivers cron job results,")
+    print_info("📬 Home Channel: where SIYUAN delivers cron job results,")
     print_info("   cross-platform messages, and notifications.")
     print_info("   For Telegram DMs, this is your user ID (same as above).")
 
@@ -2152,7 +2152,7 @@ def _setup_bluebubbles():
         if not prompt_yes_no("Reconfigure BlueBubbles?", False):
             return
 
-    print_info("Connects Hermes to iMessage via BlueBubbles — a free, open-source")
+    print_info("Connects SIYUAN to iMessage via BlueBubbles — a free, open-source")
     print_info("macOS server that bridges iMessage to any device.")
     print_info("   Requires a Mac running BlueBubbles Server v1.0.0+")
     print_info("   Download: https://bluebubbles.app/")
@@ -2266,7 +2266,7 @@ def setup_gateway(config: dict):
     from hermes_cli.gateway import _all_platforms, _platform_status, _configure_platform
 
     print_header("Messaging Platforms")
-    print_info("Connect to messaging platforms to chat with Hermes from anywhere.")
+    print_info("Connect to messaging platforms to chat with SIYUAN from anywhere.")
     print_info("Toggle with Space, confirm with Enter.")
     print()
 
@@ -2431,7 +2431,7 @@ def setup_telemetry(config: dict):
     """Configure the local, privacy-safe shared-metrics subscriber."""
     print_header("Shared Metrics")
     print_info("Shared metrics contain only bounded counters and histograms.")
-    print_info("Packages stay under this Hermes profile and are not uploaded.")
+    print_info("Packages stay under this SIYUAN profile and are not uploaded.")
 
     telemetry = config.get("telemetry")
     if not isinstance(telemetry, dict):
@@ -2639,15 +2639,15 @@ def _load_openclaw_migration_module():
 
 # Item kinds that represent high-impact changes warranting explicit warnings.
 # Gateway tokens/channels can hijack messaging platforms from the old agent.
-# Config values may have different semantics between OpenClaw and Hermes.
+# Config values may have different semantics between OpenClaw and SIYUAN.
 # Instruction/context files (.md) can contain incompatible setup procedures.
 _HIGH_IMPACT_KIND_KEYWORDS = {
-    "gateway": "⚠ Gateway/messaging — this will configure Hermes to use your OpenClaw messaging channels",
-    "telegram": "⚠ Telegram — this will point Hermes at your OpenClaw Telegram bot",
-    "slack": "⚠ Slack — this will point Hermes at your OpenClaw Slack workspace",
-    "discord": "⚠ Discord — this will point Hermes at your OpenClaw Discord bot",
-    "whatsapp": "⚠ WhatsApp — this will point Hermes at your OpenClaw WhatsApp connection",
-    "config": "⚠ Config values — OpenClaw settings may not map 1:1 to Hermes equivalents",
+    "gateway": "⚠ Gateway/messaging — this will configure SIYUAN to use your OpenClaw messaging channels",
+    "telegram": "⚠ Telegram — this will point SIYUAN at your OpenClaw Telegram bot",
+    "slack": "⚠ Slack — this will point SIYUAN at your OpenClaw Slack workspace",
+    "discord": "⚠ Discord — this will point SIYUAN at your OpenClaw Discord bot",
+    "whatsapp": "⚠ WhatsApp — this will point SIYUAN at your OpenClaw WhatsApp connection",
+    "config": "⚠ Config values — OpenClaw settings may not map 1:1 to SIYUAN equivalents",
     "soul": "⚠ Instruction file — may contain OpenClaw-specific setup/restart procedures",
     "memory": "⚠ Memory/context file — may reference OpenClaw-specific infrastructure",
     "context": "⚠ Context file — may contain OpenClaw-specific instructions",
@@ -2691,7 +2691,7 @@ def _print_migration_preview(report: dict):
         print()
 
     if conflict_items:
-        print(color("  Would overwrite (conflicts with existing Hermes config):", Colors.YELLOW))
+        print(color("  Would overwrite (conflicts with existing SIYUAN config):", Colors.YELLOW))
         for item in conflict_items:
             kind = item.get("kind", "unknown")
             reason = item.get("reason", "already exists")
@@ -2712,8 +2712,8 @@ def _print_migration_preview(report: dict):
         for warning in sorted(warnings_shown):
             print(color(f"    {warning}", Colors.YELLOW))
         print()
-        print(color("  Note: OpenClaw config values may have different semantics in Hermes.", Colors.YELLOW))
-        print(color("  For example, OpenClaw's tool_call_execution: \"auto\" ≠ Hermes's yolo mode.", Colors.YELLOW))
+        print(color("  Note: OpenClaw config values may have different semantics in SIYUAN.", Colors.YELLOW))
+        print(color("  For example, OpenClaw's tool_call_execution: \"auto\" ≠ SIYUAN's yolo mode.", Colors.YELLOW))
         print(color("  Instruction files (.md) from OpenClaw may contain incompatible procedures.", Colors.YELLOW))
         print()
 
@@ -2736,7 +2736,7 @@ def _offer_openclaw_migration(hermes_home: Path) -> bool:
     print()
     print_header("OpenClaw Installation Detected")
     print_info(f"Found OpenClaw data at {openclaw_dir}")
-    print_info("Hermes can preview what would be imported before making any changes.")
+    print_info("SIYUAN can preview what would be imported before making any changes.")
     print()
 
     if not prompt_yes_no("Would you like to see what can be imported?", default=True):
@@ -2806,7 +2806,7 @@ def _offer_openclaw_migration(hermes_home: Path) -> bool:
         )
         return False
 
-    # Execute the migration — overwrite=False so existing Hermes configs are
+    # Execute the migration — overwrite=False so existing SIYUAN configs are
     # preserved. The user saw the preview; conflicts are skipped by default.
     try:
         migrator = mod.Migrator(
@@ -2814,7 +2814,7 @@ def _offer_openclaw_migration(hermes_home: Path) -> bool:
             target_root=hermes_home.resolve(),
             execute=True,
             workspace_target=None,
-            overwrite=False,  # preserve existing Hermes config
+            overwrite=False,  # preserve existing SIYUAN config
             migrate_secrets=True,
             output_dir=None,
             selected_options=selected,
@@ -2837,7 +2837,7 @@ def _offer_openclaw_migration(hermes_home: Path) -> bool:
     if migrated:
         print_success(f"Imported {migrated} item(s) from OpenClaw.")
     if conflicts:
-        print_info(f"Skipped {conflicts} item(s) that already exist in Hermes (use hermes claw migrate --overwrite to force).")
+        print_info(f"Skipped {conflicts} item(s) that already exist in SIYUAN (use hermes claw migrate --overwrite to force).")
     if skipped:
         print_info(f"Skipped {skipped} item(s) (not found or unchanged).")
     if errors:
@@ -2872,7 +2872,7 @@ def _run_portal_one_shot(config: dict) -> None:
     Wired into ``hermes setup --portal`` and ``hermes portal``. This is the
     Nous-Portal slice of the first-time quick setup, collapsed into a single
     shareable command so a brand-new user goes from zero to a fully working
-    Hermes session — model selected, provider set, and web/image/tts/browser
+    SIYUAN session — model selected, provider set, and web/image/tts/browser
     tools routed via their Portal sub — without being told to run
     ``hermes setup`` and hunt for the quick-setup option.
 
@@ -2892,7 +2892,7 @@ def _run_portal_one_shot(config: dict) -> None:
             Colors.MAGENTA,
         )
     )
-    print(color("│     ⚕ Hermes Setup — Nous Portal (one-shot)             │", Colors.MAGENTA))
+    print(color("│       SIYUAN Setup — Nous Portal (one-shot)             │", Colors.MAGENTA))
     print(
         color(
             "└─────────────────────────────────────────────────────────┘",
@@ -3138,7 +3138,7 @@ def _run_setup_wizard_impl(args):
                         Colors.MAGENTA,
                     )
                 )
-                print(color(f"│     ⚕ Hermes Setup — {label:<34s} │", Colors.MAGENTA))
+                print(color(f"│       SIYUAN Setup — {label:<34s} │", Colors.MAGENTA))
                 print(
                     color(
                         "└─────────────────────────────────────────────────────────┘",
@@ -3176,7 +3176,7 @@ def _run_setup_wizard_impl(args):
     )
     print(
         color(
-            "│             ⚕ Hermes Agent Setup Wizard                │", Colors.MAGENTA
+            "│                SIYUAN Setup Wizard                     │", Colors.MAGENTA
         )
     )
     print(
@@ -3187,7 +3187,7 @@ def _run_setup_wizard_impl(args):
     )
     print(
         color(
-            "│  Let's configure your Hermes Agent installation.       │", Colors.MAGENTA
+            "│  Let's configure your SIYUAN installation.             │", Colors.MAGENTA
         )
     )
     print(
@@ -3218,7 +3218,7 @@ def _run_setup_wizard_impl(args):
 
         print()
         print_header("Reconfigure")
-        print_success("You already have Hermes configured.")
+        print_success("You already have SIYUAN configured.")
         print_info("Running the full wizard — each prompt shows your current value.")
         print_info("Press Enter to keep it, or type a new value to change it.")
         print_info("")
@@ -3243,7 +3243,7 @@ def _run_setup_wizard_impl(args):
             config = load_config()
 
         setup_mode = prompt_choice(
-            "How would you like to set up Hermes?",
+            "How would you like to set up SIYUAN?",
             [
                 "Quick Setup (Nous Portal) — free OAuth login, no API keys, model + tools (recommended)",
                 "Full setup — configure every provider, tool & option yourself (bring your own keys)",
@@ -3455,7 +3455,7 @@ def _print_macos_fda_tip() -> None:
     print_info("  your terminal (and Hermes.app if you use Desktop), or run:")
     print_info("    open \"x-apple.systempreferences:com.apple.preference"
                ".security?Privacy_AllFiles\"")
-    print_info("  The grant is permanent — it survives every Hermes update.")
+    print_info("  The grant is permanent — it survives every SIYUAN update.")
 
 
 def _blank_slate_minimal_toolsets(config: dict):
@@ -3467,7 +3467,7 @@ def _blank_slate_minimal_toolsets(config: dict):
     points at ``vision_analyze``, so an agent without it can't see screenshots
     or image files at all. Skills stay on because the essential
     ``hermes-agent`` skill (the agent's operating manual for driving,
-    configuring, and troubleshooting Hermes) is always seeded — without
+    configuring, and troubleshooting SIYUAN) is always seeded — without
     ``skill_view`` it would be unloadable. Two layers enforce the selection:
 
     1. ``platform_toolsets["cli"] = ["file", "skills", "terminal", "vision"]``
@@ -3562,7 +3562,7 @@ def _run_blank_slate_setup(config: dict, hermes_home, is_existing: bool):
     print_info("Everything else (web, browser, code exec, memory,")
     print_info("delegation, cron, plugins, MCP, …) starts disabled. The")
     print_info("essential `hermes-agent` skill is always kept so the agent")
-    print_info("can help you drive and configure Hermes itself.")
+    print_info("can help you drive and configure SIYUAN itself.")
     print()
 
     # ── Step 1: Provider & Model (REQUIRED — the agent cannot run without it) ──
@@ -3802,7 +3802,7 @@ def _run_quick_setup(config: dict, hermes_home):
     if missing_messaging:
         print()
         print_header("Messaging Platforms")
-        print_info("Connect Hermes to messaging apps to chat from anywhere.")
+        print_info("Connect SIYUAN to messaging apps to chat from anywhere.")
         print_info("You can configure these later with 'hermes setup gateway'.")
 
         # Group by platform (preserving order)

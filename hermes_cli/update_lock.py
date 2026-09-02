@@ -1,4 +1,4 @@
-"""Cross-process mutual exclusion for in-flight Hermes updates.
+"""Cross-process mutual exclusion for in-flight SIYUAN updates.
 
 Three different surfaces can start an update of the same install tree:
 
@@ -31,7 +31,7 @@ marker is removed on read by whoever notices it first.
 One layering wrinkle: the Tauri updater holds this marker for its WHOLE run and
 then spawns ``hermes update`` as a child stage. Without a handoff the child
 sees its own parent's live marker and refuses — the GUI update deadlocks
-against itself on every attempt ("Hermes is still running", retry forever).
+against itself on every attempt ("SIYUAN is still running", retry forever).
 Two mechanisms recognize the orchestrating parent, and either suffices:
 
 * The updater exports :data:`HANDOFF_PID_ENV` naming its own pid, and
@@ -44,8 +44,8 @@ Two mechanisms recognize the orchestrating parent, and either suffices:
   installer run (``copy_self_to_hermes_home`` deliberately no-ops during
   ``--update``), so every desktop whose staged updater predates the
   HANDOFF_PID_ENV export runs an old parent against a new child. Without the
-  ancestry check those users get exit 2 ("Hermes is still running") on every
-  GUI update forever, with no Hermes process actually running.
+  ancestry check those users get exit 2 ("SIYUAN is still running") on every
+  GUI update forever, with no SIYUAN process actually running.
 """
 
 from __future__ import annotations
@@ -77,7 +77,7 @@ HANDOFF_PID_ENV = "HERMES_UPDATE_HANDOFF_PID"
 # Already the de-facto contract: the Windows shim + venv-holder guards in
 # _cmd_update_impl exit 2, and the Tauri updater matches on it
 # (UPDATE_EXIT_CONCURRENT in apps/bootstrap-installer/src-tauri/src/update.rs)
-# to show "Hermes is still running" instead of a generic failure. Naming it
+# to show "SIYUAN is still running" instead of a generic failure. Naming it
 # here keeps the concurrent-update refusal on that same understood contract.
 UPDATE_EXIT_CONCURRENT = 2
 
@@ -85,7 +85,7 @@ UPDATE_EXIT_CONCURRENT = 2
 def update_marker_path() -> Path:
     """Path of the shared update marker.
 
-    Uses the *process* Hermes home (never the context-local profile override):
+    Uses the *process* SIYUAN home (never the context-local profile override):
     the Rust updater resolves ``$HERMES_HOME`` or the platform default, and the
     desktop pins that same value into the updater's env. A profile-scoped path
     here would put the lock somewhere the other two owners never look.
@@ -208,7 +208,7 @@ def describe_holder(holder: UpdateHolder) -> str:
     minutes, seconds = divmod(int(max(holder.age_seconds, 0)), 60)
     elapsed = f"{minutes}m {seconds}s" if minutes else f"{seconds}s"
     return (
-        f"✗ Another Hermes update is already running (PID {holder.pid}, "
+        f"✗ Another SIYUAN update is already running (PID {holder.pid}, "
         f"started {elapsed} ago).\n"
         "\n"
         "  Two updates mutating the same checkout corrupt it: one rewrites\n"

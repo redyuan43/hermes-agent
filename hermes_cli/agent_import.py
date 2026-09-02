@@ -1,4 +1,4 @@
-"""hermes import-agent — import Claude Code / Codex CLI setups into Hermes.
+"""hermes import-agent — import Claude Code / Codex CLI setups into SIYUAN.
 
 Usage:
     hermes import-agent                       # auto-detect ~/.claude or ~/.codex
@@ -51,7 +51,7 @@ from utils import atomic_write_text, atomic_yaml_write
 
 logger = logging.getLogger(__name__)
 
-# Same entry delimiter as the Hermes memory store and the openclaw migration
+# Same entry delimiter as the SIYUAN memory store and the openclaw migration
 # script — memories/MEMORY.md entries are separated by bare "§" lines.
 ENTRY_DELIMITER = "\n§\n"
 
@@ -323,14 +323,14 @@ def merge_entries(
 
 
 # ---------------------------------------------------------------------------
-# Claude Code permission rules → Hermes command patterns
+# Claude Code permission rules → SIYUAN command patterns
 # ---------------------------------------------------------------------------
 
 _BASH_RULE_RE = re.compile(r"^Bash\((?P<inner>.*)\)$")
 
 
 def claude_rule_to_command_pattern(rule: str) -> Optional[str]:
-    """Convert a Claude Code ``Bash(...)`` permission rule into a Hermes glob.
+    """Convert a Claude Code ``Bash(...)`` permission rule into a SIYUAN glob.
 
     ``Bash(npm run build)``   → ``npm run build``
     ``Bash(npm run test:*)``  → ``npm run test*``  (Claude ':*' prefix match)
@@ -484,7 +484,7 @@ class AgentImporter:
         if commands_dir.is_dir() and any(commands_dir.glob("*.md")):
             self.record(
                 "slash-commands", commands_dir, None, "skipped",
-                "Claude slash commands have no direct Hermes equivalent — "
+                "Claude slash commands have no direct SIYUAN equivalent — "
                 "consider converting them into skills",
             )
 
@@ -757,7 +757,7 @@ class AgentImporter:
                 continue
             if name in existing and not self.overwrite:
                 self.record(kind, name, f"mcp_servers.{name}", "conflict",
-                            "MCP server already exists in Hermes config")
+                            "MCP server already exists in SIYUAN config")
                 continue
 
             hermes_srv: Dict[str, Any] = {}
@@ -880,7 +880,7 @@ def import_agent_command(args) -> None:
 
     print()
     print(color("┌─────────────────────────────────────────────────────────┐", Colors.MAGENTA))
-    print(color("│          ⚕ Hermes — Import From Another Agent          │", Colors.MAGENTA))
+    print(color("│          ⚕ SIYUAN — Import From Another Agent          │", Colors.MAGENTA))
     print(color("└─────────────────────────────────────────────────────────┘", Colors.MAGENTA))
 
     if not source_dir.is_dir():

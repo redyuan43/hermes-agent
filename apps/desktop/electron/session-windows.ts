@@ -25,7 +25,7 @@ const SESSION_WINDOW_MIN_HEIGHT = 620
 // so an idle hidden window costs ~nothing. A static `backgroundThrottling:
 // false` here would pin `document.visibilityState` to 'visible' forever,
 // turning every visibility-gated poll in the renderer into an always-on timer
-// (the "Hermes idles at 20% CPU while minimized" bug). The preload path is
+// (the "SIYUAN idles at 20% CPU while minimized" bug). The preload path is
 // injected because it depends on the Electron entry's __dirname.
 //
 // `autoplayPolicy: 'no-user-gesture-required'` is load-bearing for voice:

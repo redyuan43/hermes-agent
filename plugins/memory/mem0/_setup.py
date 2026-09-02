@@ -321,7 +321,7 @@ def _setup_platform(hermes_home: str, config: dict, flags: dict[str, str]) -> No
         print(
             "\n  ⚠ MEM0_HOST is set in your environment "
             f"({os.environ['MEM0_HOST']}). It overrides platform mode — "
-            "remove it from ~/.hermes/.env (or unset it) or Hermes will keep "
+            "remove it from ~/.hermes/.env (or unset it) or SIYUAN will keep "
             "routing to the self-hosted server."
         )
 

@@ -61,7 +61,7 @@ function appendUniquePathEntries(entries, { delimiter = path.delimiter } = {}) {
 }
 
 /**
- * Hermes-managed Node.js directories, in preferred lookup order.
+ * SIYUAN-managed Node.js directories, in preferred lookup order.
  *
  * There are two on-disk layouts. `scripts/install.ps1` unpacks portable Node
  * straight into `%LOCALAPPDATA%\hermes\node` (node.exe at the root, no `bin\`);

@@ -1279,7 +1279,7 @@ def run_doctor(args):
 
     print()
     print(color("┌─────────────────────────────────────────────────────────┐", Colors.CYAN))
-    print(color("│                 🩺 Hermes Doctor                        │", Colors.CYAN))
+    print(color("│                    SIYUAN Doctor                       │", Colors.CYAN))
     print(color("└─────────────────────────────────────────────────────────┘", Colors.CYAN))
 
     _section("Security Advisories")
@@ -2008,7 +2008,7 @@ def run_doctor(args):
         if should_fix:
             soul_path.parent.mkdir(parents=True, exist_ok=True)
             soul_path.write_text(
-                "# Hermes Agent Persona\n\n"
+                "# SIYUAN Persona\n\n"
                 "<!-- Edit this file to customize how Hermes communicates. -->\n\n"
                 "You are Hermes, a helpful AI assistant.\n",
                 encoding="utf-8",

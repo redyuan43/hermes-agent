@@ -7,7 +7,7 @@
  *   nobody meets is a feature nobody has, and the pacing is what earns the
  *   default: minutes into a launch at the earliest, then six hours, which is a
  *   nicety rather than the nag that would owe you an opt-in.
- * - It covers Hermes too. "Off" from someone who has just closed a bubble means
+ * - It covers SIYUAN too. "Off" from someone who has just closed a bubble means
  *   no bubbles, not "no bubbles unless the agent sends one", so an agent tip is
  *   dropped at the bridge like a rotation tip is skipped here.
  * - `$retiredTips` is the hard-close ledger for the rotation. A tip the user ✕'d

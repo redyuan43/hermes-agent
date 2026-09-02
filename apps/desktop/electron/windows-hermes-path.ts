@@ -14,7 +14,7 @@
  *   2. chooseUpdaterArgs() — handOffWindowsBootstrapRecovery() must separate
  *      install provenance from updater viability. A bootstrap-complete marker
  *      can outlive a deleted venv, while the updater needs BOTH the venv Python
- *      and Hermes launcher. Marker-only or partial runtimes must use --repair;
+ *      and SIYUAN launcher. Marker-only or partial runtimes must use --repair;
  *      only a runnable pair can use --update.
  *   3. resolveVenvHermesCommand() — unwrapWindowsVenvHermesCommand() returned
  *      the venv python with NO runtime probe (bypassing the caller's
@@ -62,7 +62,7 @@ export function buildPathExtCandidates(pathext: string | undefined, isWindows: b
 /**
  * Choose the Windows bootstrap-recovery invocation. The gentle in-place
  * updater can only start when both pieces of its runtime contract exist: the
- * venv Python interpreter and the Hermes launcher that drives `hermes update`.
+ * venv Python interpreter and the SIYUAN launcher that drives `hermes update`.
  * A bootstrap-complete marker proves install provenance, not current runtime
  * usability, and may remain after the venv is removed or quarantined.
  *
@@ -270,14 +270,14 @@ export function resolveVenvHermesCommand(
     })
   ) {
     rememberLog?.(
-      `Ignoring venv Hermes at ${python}: runtime import probe failed (broken/partial venv); falling through to bootstrap.`
+      `Ignoring venv SIYUAN at ${python}: runtime import probe failed (broken/partial venv); falling through to bootstrap.`
     )
 
     return null
   }
 
   return {
-    label: `existing Hermes Python at ${python}`,
+    label: `existing SIYUAN Python at ${python}`,
     command: python,
     args: ['-m', 'hermes_cli.main', ...backendArgs],
     bootstrap: false,
