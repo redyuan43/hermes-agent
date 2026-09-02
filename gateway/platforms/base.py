@@ -988,7 +988,12 @@ async def cache_image_from_url(url: str, ext: str = ".jpg", retries: int = 2) ->
                 raise
 
 
-def _cleanup_cache_dir(cache_dir: Path, max_age_hours: int) -> int:
+def _cleanup_cache_dir(
+    cache_dir: Path,
+    max_age_hours: int,
+    *,
+    preserve_names: Optional[Callable[[str], bool]] = None,
+) -> int:
     """
     Delete files in *cache_dir* older than *max_age_hours*.
 
@@ -1000,6 +1005,8 @@ def _cleanup_cache_dir(cache_dir: Path, max_age_hours: int) -> int:
     cutoff = time.time() - (max_age_hours * 3600)
     removed = 0
     for f in cache_dir.iterdir():
+        if preserve_names is not None and preserve_names(f.name):
+            continue
         if f.is_file() and f.stat().st_mtime < cutoff:
             try:
                 f.unlink()
@@ -1180,7 +1187,18 @@ def cleanup_video_cache(max_age_hours: int = 24) -> int:
 
     Returns the number of files removed.
     """
-    return _cleanup_cache_dir(get_video_cache_dir(), max_age_hours)
+    cache_dir = get_video_cache_dir()
+    try:
+        from tools.video_generation_tool import _prune_video_archive
+
+        _prune_video_archive(cache_dir)
+    except Exception:
+        logger.debug("Managed video archive pruning failed", exc_info=True)
+    return _cleanup_cache_dir(
+        cache_dir,
+        max_age_hours,
+        preserve_names=lambda name: name.startswith("generated_"),
+    )
 
 
 # ---------------------------------------------------------------------------

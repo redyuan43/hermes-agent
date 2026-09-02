@@ -11,6 +11,11 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urlparse
 
+from hermes_constants import get_hermes_home
+from gateway.message_media_archive import (
+    archive_message_media_file,
+    find_archived_message_media,
+)
 from gateway.platforms.base import BasePlatformAdapter, validate_media_delivery_path
 
 
@@ -37,6 +42,14 @@ _MIME_OVERRIDES = {
     ".mkv": "video/x-matroska",
 }
 _UNSAFE_NAME_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+_LEGACY_IMAGE_MARKER = re.compile(
+    r"(?m)^[ \t]*\[Image attached at:[ \t]*(?P<path>[^\]\r\n]+)\][ \t]*$"
+)
+_LEGACY_SCREENSHOT_MARKER = re.compile(r"(?m)^[ \t]*\[screenshot\][ \t]*$")
+_LEGACY_IMAGE_NAME = re.compile(
+    r"^img_[0-9a-f]{12,64}\.(?:png|jpe?g|gif|webp|bmp)$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -147,6 +160,15 @@ def _direct_message_media(
                 items.append(item)
         return items, None
 
+    if message.get("role") == "user" and isinstance(content, str):
+        legacy_items, cleaned = _legacy_user_image_media(
+            content,
+            session_id=session_id,
+            message_id=message_id,
+        )
+        if legacy_items:
+            return legacy_items, cleaned
+
     if (
         message.get("role") != "assistant"
         or not isinstance(content, str)
@@ -168,6 +190,51 @@ def _direct_message_media(
         if item is not None:
             items.append(item)
     return items, cleaned if cleaned != content else None
+
+
+def _legacy_user_image_media(
+    content: str,
+    *,
+    session_id: str,
+    message_id: str,
+) -> tuple[List[MessageMediaItem], Optional[str]]:
+    """Recover Hermes-generated legacy image hints without trusting paths."""
+    items: List[MessageMediaItem] = []
+    for match in _LEGACY_IMAGE_MARKER.finditer(content):
+        raw_path = match.group("path").strip()
+        if not _is_managed_legacy_image(raw_path):
+            continue
+        item = _local_item(
+            raw_path,
+            session_id=session_id,
+            message_id=message_id,
+            source="legacy_attachment",
+        )
+        if item is not None:
+            items.append(item)
+    if not items:
+        return [], None
+
+    cleaned = _LEGACY_IMAGE_MARKER.sub("", content)
+    cleaned = _LEGACY_SCREENSHOT_MARKER.sub("", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return items, cleaned
+
+
+def _is_managed_legacy_image(raw_path: str) -> bool:
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute() or not _LEGACY_IMAGE_NAME.fullmatch(path.name):
+        return False
+    try:
+        resolved = path.resolve(strict=False)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    home = get_hermes_home().resolve()
+    roots = (
+        home / "cache" / "images",
+        home / "image_cache",
+    )
+    return any(resolved.is_relative_to(root.resolve()) for root in roots)
 
 
 def _structured_media_candidate(
@@ -373,14 +440,27 @@ def _tts_tool_items(
     message_id: str,
 ) -> List[MessageMediaItem]:
     candidates: List[str] = []
+    remote_candidates: List[str] = []
     try:
         payload = json.loads(content)
     except (TypeError, ValueError):
         payload = None
     if isinstance(payload, dict) and payload.get("success") is not False:
-        for field in ("host_audio", "file_path", "audio", "path"):
+        for field in (
+            "host_audio",
+            "file_path",
+            "audio",
+            "path",
+            "audio_url",
+            "public_url",
+            "url",
+        ):
             value = _nonempty_string(payload.get(field))
-            if value and not _is_http_url(value):
+            if not value:
+                continue
+            if _is_http_url(value):
+                remote_candidates.append(value)
+            else:
                 candidates.append(value)
         media_tag = _nonempty_string(payload.get("media_tag"))
         if media_tag:
@@ -391,16 +471,30 @@ def _tts_tool_items(
         candidates.extend(path for path, _is_voice in media_files)
 
     items: List[MessageMediaItem] = []
+    fallback_url = remote_candidates[0] if remote_candidates else None
     for path in candidates:
         item = _local_item(
             path,
             session_id=session_id,
             message_id=message_id,
             source="tool",
+            fallback_url=fallback_url,
             force_audio=True,
         )
         if item is not None:
             items.append(item)
+    if not items:
+        for url in remote_candidates:
+            item = _remote_item(
+                url,
+                session_id=session_id,
+                message_id=message_id,
+                kind="audio",
+                name=None,
+                source="tool",
+            )
+            if item is not None:
+                items.append(item)
     return items
 
 
@@ -414,25 +508,60 @@ def _local_item(
     force_file: bool = False,
     force_audio: bool = False,
 ) -> Optional[MessageMediaItem]:
-    safe_path = validate_media_delivery_path(raw_path, session_key=session_id)
-    if not safe_path:
+    raw_candidate = Path(raw_path).expanduser()
+    if not raw_candidate.is_absolute():
         return None
     try:
-        path = Path(safe_path).resolve(strict=True)
-        stat = path.stat()
+        canonical_path = raw_candidate.resolve(strict=False)
     except (OSError, RuntimeError, ValueError):
         return None
-    if not path.is_file():
+    name = _safe_name(raw_candidate.name, fallback="file")
+    media_id = _media_id(
+        session_id,
+        message_id,
+        f"file:{canonical_path}",
+    )
+    archived = find_archived_message_media(
+        session_id=session_id,
+        media_id=media_id,
+        name=name,
+    )
+    path: Optional[Path] = archived
+
+    safe_path = validate_media_delivery_path(raw_path, session_key=session_id)
+    if path is None:
+        if not safe_path:
+            return None
+        try:
+            source_path = Path(safe_path).resolve(strict=True)
+            stat = source_path.stat()
+        except (OSError, RuntimeError, ValueError):
+            return None
+        if not source_path.is_file():
+            return None
+        try:
+            path = archive_message_media_file(
+                source_path,
+                session_id=session_id,
+                media_id=media_id,
+                name=name,
+            )
+        except (OSError, RuntimeError, ValueError):
+            path = source_path
+
+    try:
+        stat = path.stat()
+    except OSError:
         return None
 
-    mime_type = _mime_type(path.name)
-    kind = "file" if force_file else _media_kind(path.name, mime_type)
+    mime_type = _mime_type(name)
+    kind = "file" if force_file else _media_kind(name, mime_type)
     if force_audio:
         kind = "audio"
     descriptor: Dict[str, Any] = {
-        "id": _media_id(session_id, message_id, f"file:{path}"),
+        "id": media_id,
         "kind": kind,
-        "name": _safe_name(path.name, fallback=kind),
+        "name": _safe_name(name, fallback=kind),
         "mime_type": mime_type,
         "size_bytes": stat.st_size,
         "auth_required": True,
