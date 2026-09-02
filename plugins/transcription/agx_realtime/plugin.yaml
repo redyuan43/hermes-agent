@@ -1,0 +1,10 @@
+name: agx_realtime
+version: 1.0.0
+description: "Qwen3-ASR realtime transcription through the AGX Tailnet WebSocket service."
+author: SIYUAN NOTE
+kind: backend
+optional_env:
+  - name: AGX_REALTIME_ASR_URL
+    description: "Realtime ASR WebSocket endpoint."
+    prompt: "AGX realtime ASR URL"
+    password: false

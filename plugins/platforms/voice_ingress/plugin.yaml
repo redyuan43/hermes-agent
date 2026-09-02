@@ -1,0 +1,33 @@
+name: voice_ingress-platform
+label: Voice Ingress
+kind: platform
+version: 1.0.0
+description: >
+  Local authenticated ingress for short voice turns. Accepts standard WAV or
+  a device codec such as C.ONE raw Opus packets, normalizes the audio, and
+  dispatches it into the connected Weixin adapter so Hermes owns STT, session
+  context, tools, and replies. HTTP 202 uses at-most-once process-local
+  dispatch; it is not a durable execution queue.
+author: SIYUAN NOTE
+requires_env:
+  - name: VOICE_INGRESS_BEARER_TOKEN
+    description: "Purpose-specific bearer token used only by trusted voice clients."
+    prompt: "Voice ingress bearer token"
+    password: true
+optional_env:
+  - name: VOICE_INGRESS_WEIXIN_USER_ID
+    description: "Fixed Weixin DM user; defaults to WEIXIN_HOME_CHANNEL."
+    prompt: "Weixin target user id"
+    password: false
+  - name: VOICE_INGRESS_WEIXIN_CHAT_ID
+    description: "Weixin chat id; defaults to the selected Weixin user id."
+    prompt: "Weixin target chat id"
+    password: false
+  - name: VOICE_INGRESS_PORT
+    description: "Local HTTP port (default 18781)."
+    prompt: "Voice ingress port"
+    password: false
+  - name: VOICE_INGRESS_CACHE_HOURS
+    description: "Hours to retain decoded WAV files for diagnostics (default 24)."
+    prompt: "Voice ingress WAV retention hours"
+    password: false
