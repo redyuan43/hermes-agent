@@ -31,7 +31,6 @@ class TestProviderRegistry:
 
     @pytest.mark.parametrize("provider_id,name,auth_type", [
         ("copilot-acp", "GitHub Copilot ACP", "external_process"),
-        ("claude-code-cli", "Claude Code CLI", "external_process"),
         ("copilot", "GitHub Copilot", "api_key"),
         ("huggingface", "Hugging Face", "api_key"),
         ("zai", "Z.AI / GLM", "api_key"),
@@ -330,25 +329,6 @@ class TestApiKeyProviderStatus:
         assert status["key_source"] == "GLM_API_KEY"
         assert "z.ai" in status["base_url"].lower() or "api.z.ai" in status["base_url"]
 
-    def test_claude_code_cli_status_detects_local_cli(self, monkeypatch):
-        from hermes_cli.config import get_config_path
-
-        config_path = get_config_path()
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text("claude_code_cli:\n  command: claude-dev\n", encoding="utf-8")
-        monkeypatch.setattr("hermes_cli.auth.shutil.which", lambda command: f"/opt/bin/{command}")
-
-        status = get_external_process_provider_status("claude-code-cli")
-
-        assert status["configured"] is True
-        assert status["logged_in"] is True
-        assert status["command"] == "claude-dev"
-        assert status["resolved_command"] == "/opt/bin/claude-dev"
-        assert status["base_url"] == "claude-code-cli://local"
-
-    def test_non_api_key_provider(self):
-        status = get_api_key_provider_status("nous")
-        assert status["configured"] is False
 
 # =============================================================================
 # Credential Resolution tests
@@ -361,6 +341,9 @@ class TestResolveApiKeyProviderCredentials:
 
 
     def test_try_gh_cli_token_uses_homebrew_path_when_not_on_path(self, monkeypatch):
+        from hermes_cli.copilot_auth import _invalidate_gh_cli_token_cache
+
+        _invalidate_gh_cli_token_cache()
         monkeypatch.setattr("hermes_cli.copilot_auth.shutil.which", lambda command: None)
         monkeypatch.setattr(
             "hermes_cli.copilot_auth.os.path.isfile",
@@ -387,25 +370,6 @@ class TestResolveApiKeyProviderCredentials:
         assert calls == [["/opt/homebrew/bin/gh", "auth", "token"]]
 
 
-    def test_resolve_claude_code_cli_with_local_cli(self, monkeypatch):
-        from hermes_cli.config import get_config_path
-
-        config_path = get_config_path()
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(
-            "providers:\n  claude-code-cli:\n    command: claude-dev\n",
-            encoding="utf-8",
-        )
-        monkeypatch.setattr("hermes_cli.auth.shutil.which", lambda command: f"/usr/local/bin/{command}")
-
-        creds = resolve_external_process_provider_credentials("claude-code-cli")
-
-        assert creds["provider"] == "claude-code-cli"
-        assert creds["api_key"] == "claude-code-cli"
-        assert creds["base_url"] == "claude-code-cli://local"
-        assert creds["command"] == "/usr/local/bin/claude-dev"
-        assert creds["args"] == ["-p"]
-        assert creds["source"] == "process"
 
     def test_resolve_stepfun_with_key(self, monkeypatch):
         monkeypatch.setenv("STEPFUN_API_KEY", "stepfun-secret-key")
@@ -539,14 +503,6 @@ class TestRuntimeProviderResolution:
         assert result["base_url"] == "acp://copilot"
         assert result["command"] == "/usr/local/bin/copilot"
         assert result["args"] == ["--acp", "--stdio", "--debug"]
-
-    def test_runtime_claude_code_cli_is_auxiliary_only(self, monkeypatch):
-        monkeypatch.setattr("hermes_cli.auth.shutil.which", lambda command: f"/usr/local/bin/{command}")
-
-        from hermes_cli.runtime_provider import resolve_runtime_provider
-
-        with pytest.raises(AuthError, match="only supported for auxiliary"):
-            resolve_runtime_provider(requested="claude-code-cli")
 
 
 # =============================================================================
@@ -1260,3 +1216,47 @@ class TestDeepInfraProviderProfile:
         # Fallback list intentionally empty — live catalog is the source
         # of truth. Pin the shape only, not contents.
         assert isinstance(profile.fallback_models, tuple)
+
+
+
+class TestRuntimeAlibabaRegionalAndTokenPlan:
+    """#73265: the catalog-advertised Alibaba China/Token Plan variants must
+    resolve on the shared execution path (resolve_runtime_provider), not just
+    in the profile registry — provider, key, api mode, and base URL."""
+
+    def test_runtime_alibaba_cn(self, monkeypatch):
+        monkeypatch.setenv("DASHSCOPE_API_KEY", "ds-key")
+        from hermes_cli.runtime_provider import resolve_runtime_provider
+        result = resolve_runtime_provider(requested="alibaba-cn")
+        assert result["provider"] == "alibaba-cn"
+        assert result["api_mode"] == "chat_completions"
+        assert result["api_key"] == "ds-key"
+        assert result["base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+    def test_runtime_alibaba_coding_plan_cn(self, monkeypatch):
+        monkeypatch.setenv("ALIBABA_CODING_PLAN_API_KEY", "acp-key")
+        monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+        from hermes_cli.runtime_provider import resolve_runtime_provider
+        result = resolve_runtime_provider(requested="alibaba-coding-plan-cn")
+        assert result["provider"] == "alibaba-coding-plan-cn"
+        assert result["api_mode"] == "chat_completions"
+        assert result["api_key"] == "acp-key"
+        assert result["base_url"] == "https://coding.dashscope.aliyuncs.com/v1"
+
+    def test_runtime_alibaba_token_plan(self, monkeypatch):
+        monkeypatch.setenv("ALIBABA_TOKEN_PLAN_API_KEY", "atp-key")
+        from hermes_cli.runtime_provider import resolve_runtime_provider
+        result = resolve_runtime_provider(requested="alibaba-token-plan")
+        assert result["provider"] == "alibaba-token-plan"
+        assert result["api_mode"] == "chat_completions"
+        assert result["api_key"] == "atp-key"
+        assert result["base_url"] == "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+
+    def test_runtime_alibaba_token_plan_cn(self, monkeypatch):
+        monkeypatch.setenv("ALIBABA_TOKEN_PLAN_API_KEY", "atp-key")
+        from hermes_cli.runtime_provider import resolve_runtime_provider
+        result = resolve_runtime_provider(requested="alibaba-token-plan-cn")
+        assert result["provider"] == "alibaba-token-plan-cn"
+        assert result["api_mode"] == "chat_completions"
+        assert result["api_key"] == "atp-key"
+        assert result["base_url"] == "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"

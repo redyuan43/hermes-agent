@@ -96,6 +96,7 @@ class TestBasePlatformTopicSessions:
     async def test_process_message_background_replies_in_same_topic(self):
         adapter = DummyTelegramAdapter()
         typing_calls = []
+        processing_statuses = []
 
         async def handler(_event):
             await asyncio.sleep(0)
@@ -109,6 +110,9 @@ class TestBasePlatformTopicSessions:
         adapter._keep_typing = hold_typing
 
         event = _make_event("-1001", "17585")
+        event.processing_status_callback = (
+            lambda stage, details: processing_statuses.append((stage, details))
+        )
         await adapter._process_message_background(event, build_session_key(event.source))
 
         assert adapter.sent == [
@@ -133,6 +137,44 @@ class TestBasePlatformTopicSessions:
         assert adapter.processing_hooks == [
             ("start", "1"),
             ("complete", "1", ProcessingOutcome.SUCCESS),
+        ]
+        assert processing_statuses == [("completed", {})]
+
+    @pytest.mark.asyncio
+    async def test_action_required_failure_reports_recoverable_reply_details(self):
+        adapter = DummyTelegramAdapter()
+        processing_statuses = []
+
+        async def handler(_event):
+            return "transcript\n\nagent reply"
+
+        async def fail_for_context(*_args, **_kwargs):
+            return SendResult(
+                success=False,
+                error="Fresh Weixin context token required",
+                raw_response={"reason": "context_token_required"},
+                error_kind="action_required",
+            )
+
+        adapter.set_message_handler(handler)
+        adapter.send = fail_for_context
+        event = _make_event("wx-user", "")
+        event.processing_status_callback = (
+            lambda stage, details: processing_statuses.append((stage, details))
+        )
+
+        await adapter._process_message_background(event, build_session_key(event.source))
+
+        assert processing_statuses == [
+            (
+                "failed",
+                {
+                    "pending_reply": "transcript\n\nagent reply",
+                    "delivery_error": "Fresh Weixin context token required",
+                    "delivery_error_kind": "action_required",
+                    "delivery_failure_reason": "context_token_required",
+                },
+            )
         ]
 
 
@@ -198,4 +240,3 @@ class TestTelegramAutoTtsCaptionDelivery:
                 "metadata": {"thread_id": "17585", "notify": True},
             }
         ]
-

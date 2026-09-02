@@ -31,8 +31,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-from contextlib import contextmanager
-from pathlib import Path
 from typing import Any, Optional
 
 from agent.redact import redact_sensitive_text
@@ -73,6 +71,17 @@ def _is_delegated_child_context() -> bool:
         return False
 
 
+def _is_dispatcher_owned_worker() -> bool:
+    """False for delegate_task children AND for cron jobs fired in-process from
+    a worker — i.e. whenever HERMES_KANBAN_* is present but not ours."""
+    try:
+        from agent.delegation_context import is_dispatcher_owned_worker_context
+
+        return is_dispatcher_owned_worker_context()
+    except Exception:
+        return True
+
+
 def _reject_delegated_child_mutation(tool_name: str) -> Optional[str]:
     """Deny Kanban mutations from delegate_task children.
 
@@ -105,7 +114,7 @@ def _check_kanban_mode() -> bool:
     """
     if _is_delegated_child_context():
         return False
-    if os.environ.get("HERMES_KANBAN_TASK"):
+    if os.environ.get("HERMES_KANBAN_TASK") and _is_dispatcher_owned_worker():
         return True
     return _profile_has_kanban_toolset()
 
@@ -121,7 +130,7 @@ def _check_kanban_orchestrator_mode() -> bool:
     """
     if _is_delegated_child_context():
         return False
-    if os.environ.get("HERMES_KANBAN_TASK"):
+    if os.environ.get("HERMES_KANBAN_TASK") and _is_dispatcher_owned_worker():
         return False
     return _profile_has_kanban_toolset()
 
@@ -135,6 +144,10 @@ def _default_task_id(arg: Optional[str]) -> Optional[str]:
     if arg:
         return arg
     if _is_delegated_child_context():
+        return None
+    if not _is_dispatcher_owned_worker():
+        # A cron job fired in-process from a worker must never inherit the
+        # worker's task id as an implicit default.
         return None
     env_tid = os.environ.get("HERMES_KANBAN_TASK")
     return env_tid or None
@@ -236,6 +249,28 @@ def _goal_judge_available() -> bool:
     except Exception:
         return False
     return client is not None and bool(model)
+
+
+def _goal_mode_handoff_rejection(task, evidence: str) -> Optional[str]:
+    """Return a rejection reason when a goal-mode terminal handoff is premature."""
+    if not task or not task.goal_mode or not _goal_judge_available():
+        return None
+    verdict = "done"
+    reason = ""
+    try:
+        verdict, reason, _, _, _ = judge_goal(
+            goal=f"{task.title}\n\n{task.body or ''}".strip(),
+            last_response=evidence.strip(),
+        )
+    except Exception as judge_exc:
+        # Keep the existing fail-open semantics: an unavailable/broken
+        # auxiliary judge must not permanently wedge goal-mode work.
+        logger.warning(
+            "goal judge check failed, allowing lifecycle handoff: %s",
+            judge_exc,
+            exc_info=True,
+        )
+    return reason if verdict != "done" else None
 
 
 # ---------------------------------------------------------------------------
@@ -717,35 +752,18 @@ def _handle_complete(args: dict, **kw) -> str:
             # Only enforce when a judge is actually reachable — see
             # _goal_judge_available for why an unavailable judge fails open.
             task = kb.get_task(conn, tid)
-            if task and task.goal_mode and _goal_judge_available():
-                verdict = "done"
-                reason = ""
-                try:
-                    # judge_goal returns (verdict, reason, parse_failed,
-                    # wait_directive, transport_failed) — see
-                    # hermes_cli/goals.py. Unpacking fewer raises ValueError,
-                    # which the defensive handler below swallows, leaving
-                    # verdict="done" and silently disabling the gate.
-                    verdict, reason, _, _, _ = judge_goal(
-                        goal=f"{task.title}\n\n{task.body or ''}".strip(),
-                        last_response=(summary or result or "").strip(),
-                    )
-                except Exception as judge_exc:
-                    # Defensive: judge_goal swallows its own errors, but if
-                    # it ever raises, fail open rather than wedge the worker.
-                    logger.warning(
-                        "goal judge check failed, allowing completion: %s",
-                        judge_exc,
-                        exc_info=True,
-                    )
-                if verdict != "done":
-                    return tool_error(
-                        f"Goal completion rejected by judge: {reason}. "
-                        f"To proceed, either: (1) provide explicit acceptance "
-                        f"evidence in your summary matching the task's criteria, "
-                        f"or (2) create continuation tasks with parents=[{tid}] "
-                        f"and keep this task alive."
-                    )
+            rejection = _goal_mode_handoff_rejection(
+                task,
+                (summary or result or "").strip(),
+            )
+            if rejection is not None:
+                return tool_error(
+                    f"Goal completion rejected by judge: {rejection}. "
+                    f"To proceed, either: (1) provide explicit acceptance "
+                    f"evidence in your summary matching the task's criteria, "
+                    f"or (2) create continuation tasks with parents=[{tid}] "
+                    f"and keep this task alive."
+                )
 
             try:
                 ok = kb.complete_task(
@@ -875,6 +893,132 @@ def _handle_block(args: dict, **kw) -> str:
     except Exception as e:
         logger.exception("kanban_block failed")
         return tool_error(f"kanban_block: {e}")
+
+
+def _handle_request_review(args: dict, **kw) -> str:
+    """Move implementation into the first-class review phase."""
+    delegated_err = _reject_delegated_child_mutation("kanban_request_review")
+    if delegated_err:
+        return delegated_err
+    tid = _default_task_id(args.get("task_id"))
+    if not tid:
+        return tool_error(
+            "task_id is required (or set HERMES_KANBAN_TASK in the env)"
+        )
+    ownership_err = _enforce_worker_task_ownership(tid)
+    if ownership_err:
+        return ownership_err
+    summary = args.get("summary")
+    if not summary or not str(summary).strip():
+        return tool_error(
+            "summary is required — describe what was implemented and how it "
+            "was verified so the reviewer has context"
+        )
+    summary = redact_sensitive_text(str(summary), force=True)
+    metadata = args.get("metadata")
+    if metadata is not None and not isinstance(metadata, dict):
+        return tool_error(
+            f"metadata must be an object/dict, got {type(metadata).__name__}"
+        )
+    if metadata is not None:
+        metadata_json = redact_sensitive_text(json.dumps(metadata), force=True)
+        try:
+            metadata = json.loads(metadata_json)
+        except json.JSONDecodeError:
+            return tool_error("metadata could not be safely serialized")
+    metadata = _stamp_worker_session_metadata(tid, metadata)
+    reviewer = args.get("reviewer") or None
+    if reviewer:
+        # Model-supplied free text stored durably on the event payload —
+        # redact like summary / kanban_block's reason.
+        reviewer = redact_sensitive_text(str(reviewer), force=True)
+    board = args.get("board")
+    try:
+        kb, conn = _connect(board=board)
+        try:
+            task = kb.get_task(conn, tid)
+            rejection = _goal_mode_handoff_rejection(task, summary)
+            if rejection is not None:
+                return tool_error(
+                    f"Goal review handoff rejected by judge: {rejection}. "
+                    "Provide acceptance evidence matching the card before "
+                    "requesting review."
+                )
+            ok, fail_reason = kb.request_review(
+                conn, tid,
+                summary=summary,
+                metadata=metadata,
+                reviewer=reviewer,
+                expected_run_id=_worker_run_id(tid),
+                with_reason=True,
+            )
+            if not ok:
+                detail = fail_reason or "unknown id or not in running/ready"
+                return tool_error(
+                    f"could not request review for {tid}: {detail}"
+                )
+            run = kb.latest_run(conn, tid)
+            landed = kb.get_task(conn, tid)
+            return _ok(
+                task_id=tid,
+                run_id=run.id if run else None,
+                status=landed.status if landed else "review",
+            )
+        finally:
+            conn.close()
+    except ValueError as e:
+        return tool_error(f"kanban_request_review: {e}")
+    except Exception as e:
+        logger.exception("kanban_request_review failed")
+        return tool_error(f"kanban_request_review: {e}")
+
+
+def _handle_request_changes(args: dict, **kw) -> str:
+    """Return a reviewer-owned running task to its implementer."""
+    delegated_err = _reject_delegated_child_mutation("kanban_request_changes")
+    if delegated_err:
+        return delegated_err
+    tid = _default_task_id(args.get("task_id"))
+    if not tid:
+        return tool_error(
+            "task_id is required (or set HERMES_KANBAN_TASK in the env)"
+        )
+    ownership_err = _enforce_worker_task_ownership(tid)
+    if ownership_err:
+        return ownership_err
+    reason = args.get("reason")
+    if not reason or not str(reason).strip():
+        return tool_error("reason is required — describe the changes needed")
+    reason = redact_sensitive_text(str(reason), force=True)
+    board = args.get("board")
+    try:
+        kb, conn = _connect(board=board)
+        try:
+            ok, detail = kb.request_changes(
+                conn,
+                tid,
+                reason=reason,
+                expected_run_id=_worker_run_id(tid),
+            )
+            if not ok:
+                return tool_error(
+                    f"could not request changes for {tid}: {detail or 'invalid review state'}"
+                )
+            landed = kb.get_task(conn, tid)
+            run = kb.latest_run(conn, tid)
+            return _ok(
+                task_id=tid,
+                run_id=run.id if run else None,
+                status=landed.status if landed else "ready",
+                implementer=detail,
+            )
+        finally:
+            conn.close()
+    except ValueError as e:
+        return tool_error(f"kanban_request_changes: {e}")
+    except Exception as e:
+        logger.exception("kanban_request_changes failed")
+        return tool_error(f"kanban_request_changes: {e}")
 
 
 def _handle_heartbeat(args: dict, **kw) -> str:
@@ -1214,31 +1358,6 @@ def _handle_create(args: dict, **kw) -> str:
             "assignee is required — name the profile that should execute this "
             "task (the dispatcher will only spawn tasks with an assignee)"
         )
-    assignee = str(assignee).strip()
-    if not assignee:
-        return tool_error("assignee must not be empty")
-    allowed_assignees = _configured_allowed_assignees()
-    if allowed_assignees and assignee not in allowed_assignees:
-        return tool_error(
-            f"assignee '{assignee}' is not allowed for this profile. "
-            f"Allowed profiles: {', '.join(sorted(allowed_assignees))}"
-        )
-    delivery_override = args.get("delivery")
-    resolved_delivery = None
-    if delivery_override is not None:
-        try:
-            resolved_delivery = _resolve_completion_delivery(delivery_override)
-        except ValueError as exc:
-            return tool_error(f"invalid delivery: {exc}")
-    else:
-        configured_delivery = _configured_completion_delivery()
-        if configured_delivery is not None:
-            try:
-                resolved_delivery = _resolve_completion_delivery(configured_delivery)
-            except ValueError as exc:
-                logger.warning(
-                    "invalid kanban.completion_delivery; using origin chat: %s", exc
-                )
     body = args.get("body")
     parents = args.get("parents") or []
     tenant = args.get("tenant") or os.environ.get("HERMES_TENANT")
@@ -1318,7 +1437,7 @@ def _handle_create(args: dict, **kw) -> str:
                 conn,
                 title=str(title).strip(),
                 body=body,
-                assignee=assignee,
+                assignee=str(assignee),
                 parents=tuple(parents),
                 tenant=tenant,
                 priority=int(priority) if priority is not None else 0,
@@ -1344,12 +1463,7 @@ def _handle_create(args: dict, **kw) -> str:
                 session_id=session_id,
             )
             new_task = kb.get_task(conn, new_tid)
-            if resolved_delivery is not None:
-                subscribed = _subscribe_completion_delivery(
-                    conn, new_tid, resolved_delivery,
-                )
-            else:
-                subscribed = _maybe_auto_subscribe(conn, new_tid)
+            subscribed = _maybe_auto_subscribe(conn, new_tid)
             return _ok(
                 task_id=new_tid,
                 status=new_task.status if new_task else None,
@@ -1365,161 +1479,6 @@ def _handle_create(args: dict, **kw) -> str:
     except Exception as e:
         logger.exception("kanban_create failed")
         return tool_error(f"kanban_create: {e}")
-
-
-def _configured_allowed_assignees() -> set[str]:
-    """Return an optional profile-local allowlist for Kanban assignees."""
-    try:
-        cfg = load_config()
-        raw = cfg_get(cfg, "kanban", "allowed_assignees", default=[])
-    except Exception:
-        return set()
-    if isinstance(raw, str):
-        values = raw.split(",")
-    elif isinstance(raw, (list, tuple, set)):
-        values = raw
-    else:
-        return set()
-    return {str(value).strip() for value in values if str(value).strip()}
-
-
-def _configured_completion_delivery() -> Optional[dict]:
-    try:
-        cfg = load_config()
-        delivery = cfg_get(cfg, "kanban", "completion_delivery", default=None)
-    except Exception:
-        return None
-    if not delivery:
-        return None
-    if not isinstance(delivery, dict):
-        logger.warning("kanban completion_delivery must be a mapping")
-        return None
-    return delivery
-
-
-@contextmanager
-def _delivery_profile_scope(sender_profile: str):
-    from agent.secret_scope import (
-        build_profile_secret_scope,
-        reset_secret_scope,
-        set_secret_scope,
-    )
-    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
-    from hermes_cli.profiles import get_profile_dir
-
-    profile_home = get_profile_dir(sender_profile)
-    home_token = set_hermes_home_override(profile_home)
-    secret_token = set_secret_scope(build_profile_secret_scope(Path(profile_home)))
-    try:
-        yield
-    finally:
-        reset_secret_scope(secret_token)
-        reset_hermes_home_override(home_token)
-
-
-def _resolve_completion_delivery(delivery: Any) -> dict:
-    """Validate and resolve a task/default completion destination."""
-    if not isinstance(delivery, dict):
-        raise ValueError("must be an object")
-    sender_profile = str(delivery.get("sender_profile") or "").strip()
-    platform = str(delivery.get("platform") or "").strip().lower()
-    chat_id = str(delivery.get("chat_id") or "").strip()
-    use_home_channel = delivery.get("use_home_channel") is True
-    if not sender_profile:
-        raise ValueError("sender_profile is required")
-    if not platform:
-        raise ValueError("platform is required")
-    if bool(chat_id) == use_home_channel:
-        raise ValueError(
-            "set exactly one of chat_id or use_home_channel=true"
-        )
-    from gateway.config import Platform, load_gateway_config
-    from hermes_cli.profiles import profile_exists
-
-    if not profile_exists(sender_profile):
-        raise ValueError(f"sender_profile '{sender_profile}' does not exist")
-    try:
-        platform_enum = Platform(platform)
-    except ValueError as exc:
-        raise ValueError(f"unknown platform '{platform}'") from exc
-    if use_home_channel:
-        try:
-            with _delivery_profile_scope(sender_profile):
-                home = load_gateway_config().get_home_channel(platform_enum)
-        except Exception as exc:
-            raise ValueError(
-                f"could not resolve {sender_profile}/{platform} home channel: {exc}"
-            ) from exc
-        chat_id = str(home.chat_id).strip() if home else ""
-        if not chat_id:
-            raise ValueError(
-                f"{sender_profile} has no home channel for {platform}"
-            )
-    return {
-        "sender_profile": sender_profile,
-        "platform": platform,
-        "chat_id": chat_id,
-        "thread_id": str(delivery.get("thread_id") or "").strip() or None,
-    }
-
-
-def _session_env_value(name: str) -> str:
-    """Read session origin metadata from ContextVar first, with env fallback."""
-    from gateway.session_context import get_session_env
-
-    raw = get_session_env(name, "")
-    return raw if raw else os.environ.get(name, "")
-
-
-def _origin_delivery() -> Optional[dict]:
-    try:
-        platform = _session_env_value("HERMES_SESSION_PLATFORM")
-        chat_id = _session_env_value("HERMES_SESSION_CHAT_ID")
-        if not platform or not chat_id:
-            session_key = _session_env_value("HERMES_SESSION_KEY")
-            if not session_key:
-                return None
-            platform, chat_id = "tui", session_key
-        return {
-            "platform": platform,
-            "chat_id": chat_id,
-            "thread_id": _session_env_value("HERMES_SESSION_THREAD_ID") or None,
-            "user_id": _session_env_value("HERMES_SESSION_USER_ID") or None,
-            "sender_profile": (
-                _session_env_value("HERMES_SESSION_PROFILE")
-                or os.environ.get("HERMES_PROFILE")
-            ),
-        }
-    except Exception:
-        return None
-
-
-def _subscribe_completion_delivery(
-    conn: Any, task_id: str, delivery: dict,
-) -> bool:
-    try:
-        from hermes_cli import kanban_db as _kb
-
-        fallback = _origin_delivery()
-        _kb.add_notify_sub(
-            conn,
-            task_id=task_id,
-            platform=delivery["platform"],
-            chat_id=delivery["chat_id"],
-            thread_id=delivery.get("thread_id"),
-            notifier_profile=delivery["sender_profile"],
-            fallback_platform=fallback.get("platform") if fallback else None,
-            fallback_chat_id=fallback.get("chat_id") if fallback else None,
-            fallback_thread_id=fallback.get("thread_id") if fallback else None,
-            fallback_user_id=fallback.get("user_id") if fallback else None,
-            fallback_notifier_profile=(
-                fallback.get("sender_profile") if fallback else None
-            ),
-        )
-        return True
-    except Exception as exc:
-        logger.warning("kanban completion_delivery subscription failed: %s", exc)
-        return False
 
 
 def _maybe_auto_subscribe(conn: Any, task_id: str) -> bool:
@@ -1572,8 +1531,9 @@ def _maybe_auto_subscribe(conn: Any, task_id: str) -> bool:
     platform = ""
     chat_id = ""
     try:
-        platform = _session_env_value("HERMES_SESSION_PLATFORM")
-        chat_id = _session_env_value("HERMES_SESSION_CHAT_ID")
+        from gateway.session_context import get_session_env
+        platform = get_session_env("HERMES_SESSION_PLATFORM", "")
+        chat_id = get_session_env("HERMES_SESSION_CHAT_ID", "")
         if not platform or not chat_id:
             # TUI / desktop fallback: platform/chat_id ContextVars are
             # cleared for TUI sessions, but the parent process exports
@@ -1588,17 +1548,23 @@ def _maybe_auto_subscribe(conn: Any, task_id: str) -> bool:
             # every CLI invocation, which is exactly the over-eager
             # behaviour that got #19718 reverted upstream. The TUI
             # poller keys on HERMES_SESSION_KEY.
-            session_key = _session_env_value("HERMES_SESSION_KEY")
+            session_key = (
+                get_session_env("HERMES_SESSION_KEY", "")
+                or os.environ.get("HERMES_SESSION_KEY", "")
+            )
             if not session_key:
                 return False  # CLI / cron / test — no persistent channel
             platform = "tui"
             chat_id = session_key
-        thread_id = _session_env_value("HERMES_SESSION_THREAD_ID") or None
-        user_id = _session_env_value("HERMES_SESSION_USER_ID") or None
-        chat_type = _session_env_value("HERMES_SESSION_CHAT_TYPE") or None
-        message_id = _session_env_value("HERMES_SESSION_MESSAGE_ID")
+        is_gateway_session = platform != "tui"
+        chat_type = get_session_env("HERMES_SESSION_CHAT_TYPE", "") or None
+        delivery_mode = "notify+wake" if is_gateway_session else None
+        thread_id = get_session_env("HERMES_SESSION_THREAD_ID", "") or None
+        user_id = get_session_env("HERMES_SESSION_USER_ID", "") or None
+        user_id_alt = get_session_env("HERMES_SESSION_USER_ID_ALT", "") or None
+        message_id = get_session_env("HERMES_SESSION_MESSAGE_ID", "") or ""
         notifier_profile = (
-            _session_env_value("HERMES_SESSION_PROFILE")
+            get_session_env("HERMES_SESSION_PROFILE", "")
             or os.environ.get("HERMES_PROFILE")
         )
         if not notifier_profile:
@@ -1628,9 +1594,10 @@ def _maybe_auto_subscribe(conn: Any, task_id: str) -> bool:
         _kb.add_notify_sub(
             conn, task_id=task_id,
             platform=platform, chat_id=chat_id,
+            thread_id=thread_id, user_id=user_id, user_id_alt=user_id_alt,
             chat_type=chat_type,
-            thread_id=thread_id, user_id=user_id,
             notifier_profile=notifier_profile,
+            delivery_mode=delivery_mode,
             delivery_metadata=delivery_metadata or None,
         )
         return True
@@ -1925,6 +1892,83 @@ KANBAN_BLOCK_SCHEMA = {
                     "Why you're blocked. 'dependency' waits in todo and "
                     "resumes automatically; the others surface to a human. "
                     "Omit only if none apply."
+                ),
+            },
+            "board": _board_schema_prop(),
+        },
+        "required": ["reason"],
+    },
+}
+
+KANBAN_REQUEST_REVIEW_SCHEMA = {
+    "name": "kanban_request_review",
+    "description": (
+        "Hand the task off for review: implementation, self-review, and "
+        "verification are complete and you want a human (or reviewer) to "
+        "look before it is marked done. Moves the task to the 'review' "
+        "column and notifies the subscriber. Unlike ``kanban_block`` this is "
+        "NOT a blocker — it never counts toward unblock-loop detection, so a "
+        "task can cycle through review across follow-ups without ever being "
+        "falsely escalated to triage. Use this instead of blocking with a "
+        "free-form 'review-required:' reason."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "task_id": {
+                "type": "string",
+                "description": _DESC_TASK_ID_DEFAULT,
+            },
+            "summary": {
+                "type": "string",
+                "description": (
+                    "What was implemented and how it was verified, in one or "
+                    "two sentences — shown to the reviewer. Don't paste "
+                    "the whole diff; the reviewer has the board and the PR."
+                ),
+            },
+            "reviewer": {
+                "type": "string",
+                "description": (
+                    "Optional reviewer profile. When provided, the task is "
+                    "reassigned to that profile before review dispatch."
+                ),
+            },
+            "metadata": {
+                "type": "object",
+                "description": (
+                    "Optional structured handoff facts for the reviewer, such "
+                    "as changed_files, tests_run, commit, or decisions."
+                ),
+                "additionalProperties": True,
+            },
+            "board": _board_schema_prop(),
+        },
+        "required": ["summary"],
+    },
+}
+
+KANBAN_REQUEST_CHANGES_SCHEMA = {
+    "name": "kanban_request_changes",
+    "description": (
+        "Reviewer verdict: return the current review run to the original "
+        "implementer with concrete required changes. This closes the review "
+        "run, reapplies parent dependency gating, and requeues the task without "
+        "using block-loop accounting. Only use from a task claimed from the "
+        "review column; use kanban_block only for a genuine external blocker."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "task_id": {
+                "type": "string",
+                "description": _DESC_TASK_ID_DEFAULT,
+            },
+            "reason": {
+                "type": "string",
+                "description": (
+                    "Specific, actionable changes the implementer must make "
+                    "before requesting another review."
                 ),
             },
             "board": _board_schema_prop(),
@@ -2239,39 +2283,6 @@ KANBAN_CREATE_SCHEMA = {
                     "true. Defaults to the goal-engine default (20)."
                 ),
             },
-            "delivery": {
-                "type": "object",
-                "description": (
-                    "Optional completion destination. Overrides this profile's "
-                    "kanban.completion_delivery for this task."
-                ),
-                "properties": {
-                    "sender_profile": {
-                        "type": "string",
-                        "description": "Gateway profile whose bot sends the result.",
-                    },
-                    "platform": {
-                        "type": "string",
-                        "description": "Messaging platform, such as matrix or weixin.",
-                    },
-                    "chat_id": {
-                        "type": "string",
-                        "description": "Explicit destination chat or room id.",
-                    },
-                    "thread_id": {
-                        "type": "string",
-                        "description": "Optional destination thread/topic id.",
-                    },
-                    "use_home_channel": {
-                        "type": "boolean",
-                        "description": (
-                            "Resolve the platform home channel from sender_profile."
-                        ),
-                    },
-                },
-                "required": ["sender_profile", "platform"],
-                "additionalProperties": False,
-            },
             "model": {
                 "type": "string",
                 "description": (
@@ -2376,6 +2387,24 @@ registry.register(
     handler=_handle_block,
     check_fn=_check_kanban_mode,
     emoji="⏸",
+)
+
+registry.register(
+    name="kanban_request_review",
+    toolset="kanban",
+    schema=KANBAN_REQUEST_REVIEW_SCHEMA,
+    handler=_handle_request_review,
+    check_fn=_check_kanban_mode,
+    emoji="👀",
+)
+
+registry.register(
+    name="kanban_request_changes",
+    toolset="kanban",
+    schema=KANBAN_REQUEST_CHANGES_SCHEMA,
+    handler=_handle_request_changes,
+    check_fn=_check_kanban_mode,
+    emoji="↩",
 )
 
 registry.register(
