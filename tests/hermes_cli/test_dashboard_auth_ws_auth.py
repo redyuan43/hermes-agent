@@ -21,6 +21,10 @@ from fastapi.testclient import TestClient
 
 from hermes_cli import web_server
 from hermes_cli.dashboard_auth import clear_providers, register_provider
+from hermes_cli.dashboard_auth.token_auth import (
+    clear_token_routes,
+    register_token_route,
+)
 from hermes_cli.dashboard_auth.ws_tickets import (
     _reset_for_tests,
     consume_internal_credential,
@@ -28,6 +32,7 @@ from hermes_cli.dashboard_auth.ws_tickets import (
     mint_ticket,
 )
 from tests.hermes_cli.conftest_dashboard_auth import StubAuthProvider
+from plugins.dashboard_auth.gateway_key import GatewayApiKeyProvider
 
 
 # ---------------------------------------------------------------------------
@@ -40,6 +45,7 @@ def gated_app():
     """web_server.app configured for gated mode + stub provider registered."""
     _reset_for_tests()
     clear_providers()
+    clear_token_routes()
     register_provider(StubAuthProvider())
     prev_host = getattr(web_server.app.state, "bound_host", None)
     prev_port = getattr(web_server.app.state, "bound_port", None)
@@ -50,6 +56,7 @@ def gated_app():
     client = TestClient(web_server.app, base_url="https://fly-app.fly.dev")
     yield client
     clear_providers()
+    clear_token_routes()
     _reset_for_tests()
     web_server.app.state.bound_host = prev_host
     web_server.app.state.bound_port = prev_port
@@ -126,6 +133,26 @@ class TestWsTicketEndpoint:
         # gated_auth_middleware short-circuits before the route — it
         # returns either 401 or 302. Either is fine.
         assert r.status_code in (302, 401)
+
+    def test_authenticated_token_principal_can_mint(self, gated_app):
+        clear_providers()
+        clear_token_routes()
+        register_provider(GatewayApiKeyProvider(secret="gateway-secret"))
+        register_token_route("/api/auth/ws-ticket")
+
+        r = gated_app.post(
+            "/api/auth/ws-ticket",
+            headers={"Authorization": "Bearer gateway-secret"},
+        )
+
+        assert r.status_code == 200
+        ticket = r.json()["ticket"]
+        ws = _fake_ws(query={"ticket": ticket})
+        assert web_server._ws_auth_ok(ws) is True
+        assert ws._hermes_auth_identity == {
+            "user_id": "gateway-client",
+            "provider": "gateway-api-key",
+        }
 
 
     def test_get_method_is_not_allowed(self, gated_app):
@@ -472,4 +499,3 @@ class TestGatewayWsUrl:
         gw_cred = gw.split("internal=")[1].split("&")[0]
         sc_cred = sc.split("internal=")[1].split("&")[0]
         assert gw_cred == sc_cred
-
