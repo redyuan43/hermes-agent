@@ -10434,6 +10434,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             "HERMES_GATEWAY_BUSY_ACK_ENABLED", "true"
         ).strip().lower() in {"1", "true", "yes", "on"}
 
+    @staticmethod
     def _busy_modes_from_config(
         config: dict,
         *,
