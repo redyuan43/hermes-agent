@@ -81,6 +81,113 @@ def test_notify_sub_delivery_mode_persists_and_last_write_wins(kanban_home):
         conn.close()
 
 
+def test_add_notify_sub_allows_atomic_nested_create(kanban_home):
+    conn = kb.connect()
+    try:
+        with pytest.raises(RuntimeError, match="roll back outer transaction"):
+            with kb.write_txn(conn):
+                tid = kb.create_task(
+                    conn,
+                    title="atomic subscription",
+                    assignee="worker1",
+                )
+                kb.add_notify_sub(
+                    conn,
+                    task_id=tid,
+                    platform="telegram",
+                    chat_id="chat1",
+                    allow_nested=True,
+                )
+                raise RuntimeError("roll back outer transaction")
+
+        assert conn.execute(
+            "SELECT 1 FROM tasks WHERE title = 'atomic subscription'"
+        ).fetchone() is None
+        assert conn.execute(
+            "SELECT 1 FROM kanban_notify_subs WHERE chat_id = 'chat1'"
+        ).fetchone() is None
+    finally:
+        conn.close()
+
+
+def test_notify_delivery_checkpoint_migrates_reads_writes_and_gcs(
+    kanban_home,
+):
+    path = kb.kanban_db_path()
+    conn = kb.connect()
+    try:
+        conn.execute("DROP TABLE kanban_notify_deliveries")
+        conn.commit()
+    finally:
+        conn.close()
+    kb._INITIALIZED_PATHS.discard(str(path.resolve()))
+
+    conn = kb.connect()
+    try:
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'kanban_notify_deliveries'"
+        ).fetchone()
+        tid = kb.create_task(conn, title="checkpoint gc", assignee="worker1")
+        kb.add_notify_sub(
+            conn,
+            task_id=tid,
+            platform="telegram",
+            chat_id="chat-checkpoint",
+        )
+        kb.complete_task(conn, tid, summary="done")
+        event = conn.execute(
+            "SELECT id FROM task_events WHERE task_id = ? AND kind = 'completed'",
+            (tid,),
+        ).fetchone()
+        event_id = int(event["id"])
+        assert not kb.notify_item_delivered(
+            conn,
+            task_id=tid,
+            event_id=event_id,
+            platform="telegram",
+            chat_id="chat-checkpoint",
+            thread_id="",
+            item_key="summary",
+        )
+        kb.mark_notify_item_delivered(
+            conn,
+            task_id=tid,
+            event_id=event_id,
+            platform="telegram",
+            chat_id="chat-checkpoint",
+            thread_id="",
+            item_key="summary",
+        )
+        assert kb.notify_item_delivered(
+            conn,
+            task_id=tid,
+            event_id=event_id,
+            platform="telegram",
+            chat_id="chat-checkpoint",
+            thread_id="",
+            item_key="summary",
+        )
+        old = int(__import__("time").time()) - 60
+        with kb.write_txn(conn):
+            conn.execute(
+                "UPDATE task_events SET created_at = ? WHERE id = ?",
+                (old, event_id),
+            )
+        assert kb.gc_events(conn, older_than_seconds=30) >= 1
+        assert not kb.notify_item_delivered(
+            conn,
+            task_id=tid,
+            event_id=event_id,
+            platform="telegram",
+            chat_id="chat-checkpoint",
+            thread_id="",
+            item_key="summary",
+        )
+    finally:
+        conn.close()
+
+
 def test_child_task_inherits_parent_delivery_mode(kanban_home):
     """Graph children inherit the parent's ACK edge AND its delivery_mode."""
     import hermes_cli.kanban_db as kb

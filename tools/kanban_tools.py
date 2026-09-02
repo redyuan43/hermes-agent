@@ -1423,50 +1423,117 @@ def _handle_create(args: dict, **kw) -> str:
             f"parents must be a list of task ids, got {type(parents).__name__}"
         )
     board = args.get("board")
+    origin_subscription = _auto_subscription_route()
+    selected_subscription = origin_subscription
+    try:
+        from hermes_cli.plugins import get_kanban_create_subscription
+        from hermes_cli.profiles import get_active_profile_name
+
+        selected_by_policy = get_kanban_create_subscription(
+            tool_name="kanban_create",
+            args=dict(args),
+            board=str(board or ""),
+            profile_name=(
+                os.environ.get("HERMES_PROFILE")
+                or get_active_profile_name()
+                or "default"
+            ),
+            origin=(
+                dict(origin_subscription)
+                if origin_subscription is not None
+                else None
+            ),
+        )
+        if selected_by_policy is not None:
+            selected_subscription = selected_by_policy
+    except Exception:
+        logger.warning(
+            "Kanban create subscription policy failed; using origin route",
+            exc_info=True,
+        )
     try:
         kb, conn = _connect(board=board)
         try:
-            # A project link is safe to inherit because ``create_task`` turns
-            # it into a fresh per-task worktree. Never inherit the parent's
-            # literal workspace kind/path; directory sharing must be explicit.
-            if _inherit_project and project_id is None:
-                _self_tid = os.environ.get("HERMES_KANBAN_TASK")
-                if _self_tid:
-                    _self_task = kb.get_task(conn, _self_tid)
-                    if _self_task is not None and _self_task.project_id:
-                        project_id = _self_task.project_id
-                        project_source_task_id = _self_task.id
-            new_tid = kb.create_task(
-                conn,
-                title=str(title).strip(),
-                body=body,
-                assignee=assignee,
-                parents=tuple(parents),
-                tenant=tenant,
-                priority=int(priority) if priority is not None else 0,
-                workspace_kind=str(workspace_kind),
-                workspace_path=workspace_path,
-                project_id=project_id,
-                project_source_task_id=project_source_task_id,
-                triage=triage,
-                idempotency_key=idempotency_key,
-                max_runtime_seconds=(
-                    int(max_runtime_seconds)
-                    if max_runtime_seconds is not None else None
-                ),
-                skills=skills,
-                model_override=model_override,
-                provider_override=provider_override,
-                goal_mode=goal_mode,
-                goal_max_turns=(
-                    int(goal_max_turns) if goal_max_turns is not None else None
-                ),
-                initial_status=str(initial_status),
-                created_by=os.environ.get("HERMES_PROFILE") or "worker",
-                session_id=session_id,
-            )
-            new_task = kb.get_task(conn, new_tid)
-            subscribed = _maybe_auto_subscribe(conn, new_tid)
+            with kb.write_txn(conn):
+                # Project identity may be inherited, but literal workspaces
+                # remain isolated.
+                if _inherit_project and project_id is None:
+                    _self_tid = os.environ.get("HERMES_KANBAN_TASK")
+                    if _self_tid:
+                        _self_task = kb.get_task(conn, _self_tid)
+                        if _self_task is not None and _self_task.project_id:
+                            project_id = _self_task.project_id
+                            project_source_task_id = _self_task.id
+                new_tid = kb.create_task(
+                    conn,
+                    title=str(title).strip(),
+                    body=body,
+                    assignee=assignee,
+                    parents=tuple(parents),
+                    tenant=tenant,
+                    priority=int(priority) if priority is not None else 0,
+                    workspace_kind=str(workspace_kind),
+                    workspace_path=workspace_path,
+                    project_id=project_id,
+                    project_source_task_id=project_source_task_id,
+                    triage=triage,
+                    idempotency_key=idempotency_key,
+                    max_runtime_seconds=(
+                        int(max_runtime_seconds)
+                        if max_runtime_seconds is not None
+                        else None
+                    ),
+                    skills=skills,
+                    model_override=model_override,
+                    provider_override=provider_override,
+                    goal_mode=goal_mode,
+                    goal_max_turns=(
+                        int(goal_max_turns)
+                        if goal_max_turns is not None
+                        else None
+                    ),
+                    initial_status=str(initial_status),
+                    created_by=os.environ.get("HERMES_PROFILE") or "worker",
+                    session_id=session_id,
+                )
+                try:
+                    subscribed = _subscribe_route(
+                        conn,
+                        new_tid,
+                        selected_subscription,
+                        allow_nested=True,
+                    )
+                except Exception:
+                    subscribed = False
+                    logger.warning(
+                        "Initial Kanban subscription failed; task remains created",
+                        exc_info=True,
+                    )
+                new_task = kb.get_task(conn, new_tid)
+            if subscribed:
+                try:
+                    from hermes_cli.plugins import (
+                        notify_kanban_create_subscription,
+                    )
+
+                    notify_kanban_create_subscription(
+                        task_id=new_tid,
+                        board=str(board or ""),
+                        profile_name=(
+                            os.environ.get("HERMES_PROFILE") or "default"
+                        ),
+                        origin=(
+                            dict(origin_subscription)
+                            if origin_subscription is not None
+                            else None
+                        ),
+                        subscription=dict(selected_subscription or {}),
+                    )
+                except Exception:
+                    logger.warning(
+                        "Kanban subscription observer failed",
+                        exc_info=True,
+                    )
             return _ok(
                 task_id=new_tid,
                 status=new_task.status if new_task else None,
@@ -1484,14 +1551,12 @@ def _handle_create(args: dict, **kw) -> str:
         return tool_error(f"kanban_create: {e}")
 
 
-def _maybe_auto_subscribe(conn: Any, task_id: str) -> bool:
-    """Auto-subscribe the calling session to task completion / block events.
+def _auto_subscription_route() -> Optional[dict[str, Any]]:
+    """Build the calling session's default completion-notification route.
 
-    Returns True if a subscription row was written, False otherwise (no
-    session context, config gate disabled, or best-effort failure). The
-    caller surfaces this in the ``subscribed`` field of the kanban_create
-    response so an orchestrator can decide whether to fall back to an
-    explicit ``kanban_notify-subscribe`` or to polling.
+    Returns ``None`` when there is no durable delivery channel or the config
+    gate is disabled. The caller may pass the route through plugin policy
+    before writing exactly one initial subscription with the task.
 
     Gated by ``kanban.auto_subscribe_on_create`` in config.yaml (default
     True). Disable to mirror pre-feature behaviour, e.g. when the
@@ -1517,15 +1582,12 @@ def _maybe_auto_subscribe(conn: Any, task_id: str) -> bool:
     - **CLI / cron / test / unattached**: no persistent delivery channel,
       no-op.
 
-    Failure mode: any exception inside the function is logged at WARNING
-    with the offending exception + diagnostic env vars and swallowed.
-    We never want a notification bookkeeping failure to fail the
-    kanban_create that the agent is mid-conversation about.
+    Any resolution exception is logged and degrades to no subscription.
     """
     try:
         cfg = load_config()
         if not cfg_get(cfg, "kanban", "auto_subscribe_on_create", default=True):
-            return False
+            return None
     except Exception:
         # If config can't load we still default to True — this is the
         # user-friendly behaviour that mirrors the pre-gate implementation.
@@ -1556,7 +1618,7 @@ def _maybe_auto_subscribe(conn: Any, task_id: str) -> bool:
                 or os.environ.get("HERMES_SESSION_KEY", "")
             )
             if not session_key:
-                return False  # CLI / cron / test — no persistent channel
+                return None  # CLI / cron / test — no persistent channel
             platform = "tui"
             chat_id = session_key
         is_gateway_session = platform != "tui"
@@ -1592,23 +1654,59 @@ def _maybe_auto_subscribe(conn: Any, task_id: str) -> bool:
             if message_id:
                 delivery_metadata["telegram_reply_to_message_id"] = str(message_id)
 
-        # Lazy-import to keep the module-level dependency light
-        from hermes_cli import kanban_db as _kb
-        _kb.add_notify_sub(
-            conn, task_id=task_id,
-            platform=platform, chat_id=chat_id,
-            thread_id=thread_id, user_id=user_id, user_id_alt=user_id_alt,
-            chat_type=chat_type,
-            notifier_profile=notifier_profile,
-            delivery_mode=delivery_mode,
-            delivery_metadata=delivery_metadata or None,
-        )
-        return True
+        return {
+            "platform": platform,
+            "chat_id": chat_id,
+            "thread_id": thread_id,
+            "user_id": user_id,
+            "user_id_alt": user_id_alt,
+            "chat_type": chat_type,
+            "notifier_profile": notifier_profile,
+            "delivery_mode": delivery_mode,
+            "delivery_metadata": delivery_metadata or None,
+        }
     except Exception as _exc:
         logger.warning(
-            "_maybe_auto_subscribe failed: %r (platform=%r key_set=%r)",
+            "_auto_subscription_route failed: %r (platform=%r key_set=%r)",
             _exc, platform, bool(chat_id),
         )
+        return None
+
+
+def _subscribe_route(
+    conn: Any,
+    task_id: str,
+    route: Optional[dict[str, Any]],
+    *,
+    allow_nested: bool = False,
+) -> bool:
+    if not route:
+        return False
+    from hermes_cli import kanban_db as _kb
+
+    _kb.add_notify_sub(
+        conn,
+        task_id=task_id,
+        platform=str(route["platform"]),
+        chat_id=str(route["chat_id"]),
+        thread_id=route.get("thread_id"),
+        user_id=route.get("user_id"),
+        user_id_alt=route.get("user_id_alt"),
+        chat_type=route.get("chat_type"),
+        notifier_profile=route.get("notifier_profile"),
+        delivery_mode=route.get("delivery_mode"),
+        delivery_metadata=route.get("delivery_metadata"),
+        allow_nested=allow_nested,
+    )
+    return True
+
+
+def _maybe_auto_subscribe(conn: Any, task_id: str) -> bool:
+    """Compatibility wrapper for explicit callers and focused tests."""
+    try:
+        return _subscribe_route(conn, task_id, _auto_subscription_route())
+    except Exception as _exc:
+        logger.warning("_maybe_auto_subscribe failed: %r", _exc)
         return False
 
 

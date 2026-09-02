@@ -363,6 +363,9 @@ VALID_HOOKS: Set[str] = {
     #     skipped_nonspawnable, skipped_locked).
     #   Privacy: result carries task ids, assignees, and workspace paths.
     "on_kanban_dispatch_tick",
+    # Initial notification-route policy for a newly created Kanban task.
+    "transform_kanban_create_subscription",
+    "post_kanban_create_subscription",
     # Kanban notification delivery extension points. These keep policy and
     # partial-delivery state outside the board database while the gateway
     # remains the generic transport executor.
@@ -420,6 +423,7 @@ VALID_HOOKS: Set[str] = {
 SHELL_UNSUPPORTED_HOOKS: Set[str] = {
     "transform_api_error_classification",
     "transform_gateway_model_route",
+    "transform_kanban_create_subscription",
     "pre_kanban_delivery_item",
     "transform_kanban_delivery_failure",
 }
@@ -457,6 +461,8 @@ _HOOK_TIMEOUT_BOUNDED_HOOKS: Set[str] = {
     "pre_llm_call",
     "post_llm_call",
     "transform_gateway_model_route",
+    "transform_kanban_create_subscription",
+    "post_kanban_create_subscription",
     "pre_api_request",
     "post_api_request",
     "api_request_error",
@@ -7022,6 +7028,80 @@ def should_skip_kanban_delivery_item(**payload: Any) -> bool:
     return False
 
 
+def _sanitize_kanban_delivery_route(raw_route: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw_route, Mapping):
+        return None
+    platform = str(raw_route.get("platform") or "").strip().lower()
+    chat_id = str(raw_route.get("chat_id") or "").strip()
+    if not platform or not chat_id:
+        return None
+    try:
+        if platform != "tui":
+            from gateway.config import Platform
+
+            Platform(platform)
+    except (TypeError, ValueError):
+        return None
+    notifier_profile = (
+        str(raw_route.get("notifier_profile") or "").strip() or None
+    )
+    if notifier_profile:
+        try:
+            from hermes_cli.profiles import profile_exists
+
+            if not profile_exists(notifier_profile):
+                return None
+        except (TypeError, ValueError):
+            return None
+    return {
+        "platform": platform,
+        "chat_id": chat_id,
+        "thread_id": str(raw_route.get("thread_id") or "").strip(),
+        "user_id": str(raw_route.get("user_id") or "").strip() or None,
+        "user_id_alt": (
+            str(raw_route.get("user_id_alt") or "").strip() or None
+        ),
+        "chat_type": str(raw_route.get("chat_type") or "").strip() or "dm",
+        "notifier_profile": notifier_profile,
+        "delivery_mode": (
+            str(raw_route.get("delivery_mode") or "").strip() or "notify"
+        ),
+        "delivery_metadata": (
+            dict(raw_route.get("delivery_metadata"))
+            if isinstance(raw_route.get("delivery_metadata"), Mapping)
+            else {}
+        ),
+    }
+
+
+def get_kanban_create_subscription(**payload: Any) -> Optional[Dict[str, Any]]:
+    """Return the first valid plugin-selected initial notification route."""
+    winner: Optional[Dict[str, Any]] = None
+    skipped_valid = 0
+    for result in invoke_hook("transform_kanban_create_subscription", **payload):
+        if not isinstance(result, Mapping):
+            continue
+        route = _sanitize_kanban_delivery_route(result.get("route"))
+        if route is None:
+            continue
+        if winner is None:
+            winner = route
+        else:
+            skipped_valid += 1
+    if skipped_valid:
+        logger.warning(
+            "Multiple plugins returned Kanban create subscriptions; using the "
+            "first valid result and skipping %d later result(s)",
+            skipped_valid,
+        )
+    return winner
+
+
+def notify_kanban_create_subscription(**payload: Any) -> None:
+    """Notify plugins after a task and its initial subscription commit."""
+    invoke_hook("post_kanban_create_subscription", **payload)
+
+
 def notify_kanban_delivery_item_delivered(**payload: Any) -> None:
     """Notify plugins after one Kanban notification item is accepted."""
     invoke_hook("post_kanban_delivery_item", **payload)
@@ -7034,34 +7114,9 @@ def get_kanban_delivery_fallback(**payload: Any) -> Optional[Dict[str, Any]]:
     for result in invoke_hook("transform_kanban_delivery_failure", **payload):
         if not isinstance(result, Mapping):
             continue
-        raw_route = result.get("route")
-        if not isinstance(raw_route, Mapping):
+        route = _sanitize_kanban_delivery_route(result.get("route"))
+        if route is None:
             continue
-        platform = str(raw_route.get("platform") or "").strip().lower()
-        chat_id = str(raw_route.get("chat_id") or "").strip()
-        if not platform or not chat_id:
-            continue
-        route = {
-            "platform": platform,
-            "chat_id": chat_id,
-            "thread_id": str(raw_route.get("thread_id") or "").strip(),
-            "user_id": str(raw_route.get("user_id") or "").strip() or None,
-            "user_id_alt": (
-                str(raw_route.get("user_id_alt") or "").strip() or None
-            ),
-            "chat_type": str(raw_route.get("chat_type") or "").strip() or "dm",
-            "notifier_profile": (
-                str(raw_route.get("notifier_profile") or "").strip() or None
-            ),
-            "delivery_mode": (
-                str(raw_route.get("delivery_mode") or "").strip() or "notify"
-            ),
-            "delivery_metadata": (
-                dict(raw_route.get("delivery_metadata"))
-                if isinstance(raw_route.get("delivery_metadata"), Mapping)
-                else {}
-            ),
-        }
         if winner is None:
             winner = route
         else:

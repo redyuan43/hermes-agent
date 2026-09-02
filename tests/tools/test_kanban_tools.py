@@ -950,6 +950,52 @@ def test_create_respects_auto_subscribe_on_create_false(monkeypatch, worker_env,
     assert _list_subs_for_task(d["task_id"]) == []
 
 
+def test_create_subscription_policy_selects_single_fixed_route(
+    monkeypatch, worker_env,
+):
+    from hermes_cli import plugins as plugin_api
+    from tools import kanban_tools as kt
+
+    monkeypatch.setenv("HERMES_SESSION_PLATFORM", "telegram")
+    monkeypatch.setenv("HERMES_SESSION_CHAT_ID", "same-chat")
+    monkeypatch.setenv("HERMES_SESSION_PROFILE", "origin-profile")
+    observed = {}
+
+    monkeypatch.setattr(
+        plugin_api,
+        "get_kanban_create_subscription",
+        lambda **_payload: {
+            "platform": "telegram",
+            "chat_id": "same-chat",
+            "thread_id": "",
+            "notifier_profile": "fixed-profile",
+            "delivery_mode": "notify+wake",
+            "delivery_metadata": {
+                "policy_plugin": "fixture",
+                "policy_profile": "origin-profile",
+            },
+        },
+    )
+    monkeypatch.setattr(
+        plugin_api,
+        "notify_kanban_create_subscription",
+        lambda **payload: observed.update(payload),
+    )
+
+    result = json.loads(
+        kt._handle_create({"title": "fixed route", "assignee": "peer"})
+    )
+
+    assert result["ok"] is True
+    assert result["subscribed"] is True
+    subs = _list_subs_for_task(result["task_id"])
+    assert len(subs) == 1
+    assert subs[0]["chat_id"] == "same-chat"
+    assert subs[0]["notifier_profile"] == "fixed-profile"
+    assert observed["origin"]["notifier_profile"] == "origin-profile"
+    assert observed["subscription"]["notifier_profile"] == "fixed-profile"
+
+
 def test_create_partial_session_context_no_subscribe(monkeypatch, worker_env):
     """Only one of (platform, chat_id) set -> no implicit subscribe.
     Either both are set (gateway) or neither (TUI / CLI); partial is

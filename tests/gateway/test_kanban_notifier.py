@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import sqlite3
 from pathlib import Path
 
@@ -568,7 +569,10 @@ class RetryArtifactAdapter(RecordingAdapter):
             raise RuntimeError("transient artifact failure")
 
 
-def test_notifier_retries_only_missing_artifact(tmp_path, monkeypatch):
+def test_notifier_retries_only_missing_artifact_without_plugin(
+    tmp_path, monkeypatch,
+):
+    """Core checkpoints survive a partial send when no plugin participates."""
     db_path = tmp_path / "artifact-checkpoints.db"
     monkeypatch.setenv("HERMES_KANBAN_DB", str(db_path))
     monkeypatch.setenv("HERMES_MEDIA_ALLOW_DIRS", str(tmp_path))
@@ -593,14 +597,13 @@ def test_notifier_retries_only_missing_artifact(tmp_path, monkeypatch):
 
     adapter = RetryArtifactAdapter(second)
     runner = _make_runner(adapter)
-    delivered = set()
     monkeypatch.setattr(
         "hermes_cli.plugins.should_skip_kanban_delivery_item",
-        lambda **payload: payload["item_key"] in delivered,
+        lambda **_payload: False,
     )
     monkeypatch.setattr(
         "hermes_cli.plugins.notify_kanban_delivery_item_delivered",
-        lambda **payload: delivered.add(payload["item_key"]),
+        lambda **_payload: None,
     )
     asyncio.run(_run_one_notifier_tick(monkeypatch, runner))
     runner._running = True
@@ -609,6 +612,232 @@ def test_notifier_retries_only_missing_artifact(tmp_path, monkeypatch):
     assert len(adapter.sent) == 1
     assert adapter.documents.count(str(first)) == 1
     assert adapter.documents.count(str(second)) == 2
+    conn = kb.connect()
+    try:
+        checkpoint_count = conn.execute(
+            "SELECT COUNT(*) FROM kanban_notify_deliveries WHERE task_id = ?",
+            (tid,),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert checkpoint_count == 3
+
+
+class NonPushWakeAdapter(RecordingAdapter):
+    supports_async_delivery = False
+
+
+def test_wake_self_post_failure_uses_common_fallback_hook(
+    tmp_path, monkeypatch,
+):
+    db_path = tmp_path / "wake-fallback.db"
+    monkeypatch.setenv("HERMES_KANBAN_DB", str(db_path))
+    kb.init_db()
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(
+            conn,
+            title="wake fallback",
+            assignee="worker",
+            session_id="raw-api-session",
+        )
+        kb.add_notify_sub(
+            conn,
+            task_id=tid,
+            platform="api_server",
+            chat_id="raw-api-session",
+            delivery_mode="wake",
+        )
+        kb.complete_task(conn, tid, summary="done")
+    finally:
+        conn.close()
+
+    fallback_calls = []
+
+    def fallback_hook(**payload):
+        fallback_calls.append(payload)
+        return {
+            "platform": "telegram",
+            "chat_id": "fallback-chat",
+            "thread_id": "",
+            "delivery_mode": "notify",
+        }
+
+    async def fail_wake(*_args, **_kwargs):
+        raise RuntimeError("self-post unavailable")
+
+    monkeypatch.setattr(
+        "hermes_cli.plugins.get_kanban_delivery_fallback",
+        fallback_hook,
+    )
+    monkeypatch.setattr("gateway.wake.deliver_wake", fail_wake)
+
+    adapter = NonPushWakeAdapter()
+    runner = _make_runner(adapter)
+    runner.adapters = {Platform.API_SERVER: adapter}
+    asyncio.run(_run_one_notifier_tick(monkeypatch, runner))
+
+    assert len(fallback_calls) == 1
+    assert fallback_calls[0]["operation"] == "wake-self-post"
+    assert fallback_calls[0]["failures"] == 1
+    conn = kb.connect()
+    try:
+        subs = kb.list_notify_subs(conn, tid)
+    finally:
+        conn.close()
+    assert len(subs) == 1
+    assert subs[0]["platform"] == "telegram"
+    assert subs[0]["chat_id"] == "fallback-chat"
+    assert subs[0]["last_event_id"] == 1
+    conn = kb.connect()
+    try:
+        _, pending = kb.unseen_events_for_sub(
+            conn,
+            task_id=tid,
+            platform="telegram",
+            chat_id="fallback-chat",
+            kinds=["completed"],
+        )
+    finally:
+        conn.close()
+    assert [event.kind for event in pending] == ["completed"]
+
+
+def test_invalid_plugin_fallback_platform_does_not_replace_subscription(
+    tmp_path, monkeypatch,
+):
+    db_path = tmp_path / "invalid-fallback.db"
+    monkeypatch.setenv("HERMES_KANBAN_DB", str(db_path))
+    kb.init_db()
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(conn, title="invalid fallback", assignee="worker")
+        kb.add_notify_sub(
+            conn,
+            task_id=tid,
+            platform="telegram",
+            chat_id="primary-chat",
+        )
+        kb.complete_task(conn, tid, summary="done")
+        old_cursor, claimed_cursor, events = kb.claim_unseen_events_for_sub(
+            conn,
+            task_id=tid,
+            platform="telegram",
+            chat_id="primary-chat",
+            kinds=["completed"],
+        )
+        assert events
+        sub = kb.list_notify_subs(conn, tid)[0]
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(
+        "hermes_cli.plugins.get_kanban_delivery_fallback",
+        lambda **_payload: {
+            "platform": "not-a-platform",
+            "chat_id": "wrong-chat",
+        },
+    )
+    runner = _make_runner(RecordingAdapter())
+
+    assert runner._kanban_activate_fallback(
+        sub,
+        claimed_cursor,
+        old_cursor,
+        None,
+        "send",
+        1,
+        "failed",
+    ) is None
+    conn = kb.connect()
+    try:
+        remaining = kb.list_notify_subs(conn, tid)
+    finally:
+        conn.close()
+    assert len(remaining) == 1
+    assert remaining[0]["platform"] == "telegram"
+    assert remaining[0]["chat_id"] == "primary-chat"
+
+
+def test_fallback_hook_uses_subscription_policy_profile_scope(
+    tmp_path, monkeypatch,
+):
+    db_path = tmp_path / "policy-profile-fallback.db"
+    monkeypatch.setenv("HERMES_KANBAN_DB", str(db_path))
+    kb.init_db()
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(conn, title="profile fallback", assignee="worker")
+        kb.add_notify_sub(
+            conn,
+            task_id=tid,
+            platform="telegram",
+            chat_id="primary-chat",
+            delivery_metadata={"policy_profile": "policy-a"},
+        )
+        kb.complete_task(conn, tid, summary="done")
+        old_cursor, claimed_cursor, events = kb.claim_unseen_events_for_sub(
+            conn,
+            task_id=tid,
+            platform="telegram",
+            chat_id="primary-chat",
+            kinds=["completed"],
+        )
+        assert events
+        sub = kb.list_notify_subs(conn, tid)[0]
+    finally:
+        conn.close()
+
+    active_scope = []
+    observed = {}
+
+    @contextlib.contextmanager
+    def fake_profile_scope(profile_home):
+        active_scope.append(profile_home)
+        try:
+            yield
+        finally:
+            active_scope.pop()
+
+    def fallback_hook(**payload):
+        observed["scope"] = list(active_scope)
+        observed["payload"] = payload
+        return {
+            "platform": "telegram",
+            "chat_id": "fallback-chat",
+        }
+
+    policy_home = tmp_path / "profiles" / "policy-a"
+    monkeypatch.setattr(
+        "hermes_cli.profiles.get_profile_dir",
+        lambda profile: policy_home if profile == "policy-a" else None,
+    )
+    monkeypatch.setattr(
+        "gateway.run._profile_runtime_scope",
+        fake_profile_scope,
+    )
+    monkeypatch.setattr(
+        "hermes_cli.plugins.get_kanban_delivery_fallback",
+        fallback_hook,
+    )
+
+    runner = _make_runner(RecordingAdapter())
+    replaced = runner._kanban_activate_fallback(
+        sub,
+        claimed_cursor,
+        old_cursor,
+        None,
+        "send",
+        2,
+        "failed",
+    )
+
+    assert observed["scope"] == [policy_home]
+    assert observed["payload"]["subscription"]["delivery_metadata"] == {
+        "policy_profile": "policy-a"
+    }
+    assert replaced is not None
+    assert replaced["chat_id"] == "fallback-chat"
 
 
 def test_notifier_switches_to_origin_after_three_primary_failures(

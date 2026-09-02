@@ -1514,6 +1514,20 @@ CREATE TABLE IF NOT EXISTS kanban_notify_subs (
     PRIMARY KEY (task_id, platform, chat_id, thread_id)
 );
 
+-- Durable per-item delivery checkpoints. The subscription cursor protects
+-- whole events; this table protects a successfully sent summary or artifact
+-- when a later item in the same event fails and the cursor is rewound.
+CREATE TABLE IF NOT EXISTS kanban_notify_deliveries (
+    task_id       TEXT NOT NULL,
+    event_id      INTEGER NOT NULL,
+    platform      TEXT NOT NULL,
+    chat_id       TEXT NOT NULL,
+    thread_id     TEXT NOT NULL DEFAULT '',
+    item_key      TEXT NOT NULL,
+    delivered_at INTEGER NOT NULL,
+    PRIMARY KEY (task_id, event_id, platform, chat_id, thread_id, item_key)
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee_status ON tasks(assignee, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_status          ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_links_child           ON task_links(child_id);
@@ -1524,6 +1538,7 @@ CREATE INDEX IF NOT EXISTS idx_runs_task             ON task_runs(task_id, start
 CREATE INDEX IF NOT EXISTS idx_runs_status           ON task_runs(status);
 CREATE INDEX IF NOT EXISTS idx_attachments_task      ON task_attachments(task_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_notify_task           ON kanban_notify_subs(task_id);
+CREATE INDEX IF NOT EXISTS idx_notify_delivery_task  ON kanban_notify_deliveries(task_id);
 """
 
 
@@ -2774,6 +2789,30 @@ def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
             _add_column_if_missing(
                 conn, "kanban_notify_subs", "delivery_metadata", "delivery_metadata TEXT"
             )
+
+    # Core owns durable partial-delivery correctness even when no plugin is
+    # installed. Existing boards created while this table was absent migrate
+    # additively on their next open.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS kanban_notify_deliveries (
+            task_id       TEXT NOT NULL,
+            event_id      INTEGER NOT NULL,
+            platform      TEXT NOT NULL,
+            chat_id       TEXT NOT NULL,
+            thread_id     TEXT NOT NULL DEFAULT '',
+            item_key      TEXT NOT NULL,
+            delivered_at INTEGER NOT NULL,
+            PRIMARY KEY (
+                task_id, event_id, platform, chat_id, thread_id, item_key
+            )
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_notify_delivery_task "
+        "ON kanban_notify_deliveries(task_id)"
+    )
 
     # One-shot backfill: any task that is 'running' before runs existed
     # had its claim_lock / claim_expires / worker_pid on the task row.
@@ -7573,6 +7612,10 @@ def delete_archived_task(conn: sqlite3.Connection, task_id: str) -> bool:
         conn.execute("DELETE FROM task_events WHERE task_id = ?", (task_id,))
         conn.execute("DELETE FROM task_runs WHERE task_id = ?", (task_id,))
         conn.execute("DELETE FROM kanban_notify_subs WHERE task_id = ?", (task_id,))
+        conn.execute(
+            "DELETE FROM kanban_notify_deliveries WHERE task_id = ?",
+            (task_id,),
+        )
         cur = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
         return cur.rowcount == 1
 
@@ -7596,6 +7639,10 @@ def delete_task(conn: sqlite3.Connection, task_id: str) -> bool:
         conn.execute("DELETE FROM task_events WHERE task_id = ?", (task_id,))
         conn.execute("DELETE FROM task_runs WHERE task_id = ?", (task_id,))
         conn.execute("DELETE FROM kanban_notify_subs WHERE task_id = ?", (task_id,))
+        conn.execute(
+            "DELETE FROM kanban_notify_deliveries WHERE task_id = ?",
+            (task_id,),
+        )
     recompute_ready(conn)
     return True
 
@@ -11407,6 +11454,7 @@ def add_notify_sub(
     notifier_profile: Optional[str] = None,
     delivery_mode: Optional[str] = None,
     delivery_metadata: Optional[Mapping[str, Any]] = None,
+    allow_nested: bool = False,
 ) -> None:
     """Register a gateway source that wants terminal-state notifications
     for ``task_id``. Idempotent on (task, platform, chat, thread).
@@ -11449,7 +11497,7 @@ def add_notify_sub(
     insert_chat_type = chat_type or "dm"
     now = int(time.time())
     metadata_json = _encode_notify_delivery_metadata(delivery_metadata)
-    with write_txn(conn):
+    with write_txn(conn, allow_nested=allow_nested):
         conn.execute(
             """
             INSERT OR IGNORE INTO kanban_notify_subs
@@ -11731,6 +11779,17 @@ def purge_stale_done_notify_subs(
         return 0
     cutoff = int(time.time()) - days * 86400
     with write_txn(conn):
+        conn.execute(
+            "DELETE FROM kanban_notify_deliveries WHERE task_id IN ("
+            " SELECT t.id FROM tasks t"
+            " WHERE t.status = 'done'"
+            " AND COALESCE("
+            "  (SELECT MAX(e.created_at) FROM task_events e"
+            "   WHERE e.task_id = t.id),"
+            "  t.completed_at, t.created_at, 0"
+            " ) < ?)",
+            (cutoff,),
+        )
         cur = conn.execute(
             "DELETE FROM kanban_notify_subs WHERE task_id IN ("
             " SELECT t.id FROM tasks t"
@@ -11891,6 +11950,61 @@ def rewind_notify_cursor(
     return cur.rowcount > 0
 
 
+def notify_item_delivered(
+    conn: sqlite3.Connection,
+    *,
+    task_id: str,
+    event_id: int,
+    platform: str,
+    chat_id: str,
+    thread_id: Optional[str],
+    item_key: str,
+) -> bool:
+    """Return whether one notification item was already accepted."""
+    row = conn.execute(
+        "SELECT 1 FROM kanban_notify_deliveries "
+        "WHERE task_id = ? AND event_id = ? AND platform = ? "
+        "AND chat_id = ? AND thread_id = ? AND item_key = ?",
+        (
+            task_id,
+            int(event_id),
+            platform,
+            chat_id,
+            thread_id or "",
+            item_key,
+        ),
+    ).fetchone()
+    return row is not None
+
+
+def mark_notify_item_delivered(
+    conn: sqlite3.Connection,
+    *,
+    task_id: str,
+    event_id: int,
+    platform: str,
+    chat_id: str,
+    thread_id: Optional[str],
+    item_key: str,
+) -> None:
+    """Durably checkpoint one accepted notification item."""
+    with write_txn(conn):
+        conn.execute(
+            "INSERT OR IGNORE INTO kanban_notify_deliveries "
+            "(task_id, event_id, platform, chat_id, thread_id, item_key, "
+            "delivered_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                task_id,
+                int(event_id),
+                platform,
+                chat_id,
+                thread_id or "",
+                item_key,
+                int(time.time()),
+            ),
+        )
+
+
 def replace_notify_sub_route(
     conn: sqlite3.Connection,
     *,
@@ -12005,6 +12119,13 @@ def gc_events(
     history."""
     cutoff = int(time.time()) - int(older_than_seconds)
     with write_txn(conn):
+        conn.execute(
+            "DELETE FROM kanban_notify_deliveries WHERE (task_id, event_id) IN "
+            "(SELECT task_id, id FROM task_events WHERE created_at < ? "
+            "AND task_id IN "
+            "(SELECT id FROM tasks WHERE status IN ('done', 'archived')))",
+            (cutoff,),
+        )
         cur = conn.execute(
             "DELETE FROM task_events WHERE created_at < ? AND task_id IN "
             "(SELECT id FROM tasks WHERE status IN ('done', 'archived'))",

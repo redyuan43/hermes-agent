@@ -918,6 +918,41 @@ class TestPluginHooks:
             "delivery_metadata": {"reply_to_message_id": "42"},
         }
 
+    def test_kanban_create_subscription_is_sanitized(self, monkeypatch):
+        import hermes_cli.plugins as plugins_mod
+
+        manager = PluginManager()
+        manager._discovered = True
+        manager._hooks["transform_kanban_create_subscription"] = [
+            lambda **_: {
+                "route": {
+                    "platform": " Telegram ",
+                    "chat_id": " fixed-chat ",
+                    "thread_id": " topic ",
+                    "notifier_profile": "default",
+                    "delivery_mode": "notify+wake",
+                    "api_key": "must-not-flow",
+                }
+            }
+        ]
+        monkeypatch.setattr(plugins_mod, "get_plugin_manager", lambda: manager)
+
+        result = plugins_mod.get_kanban_create_subscription(
+            origin={"platform": "telegram", "chat_id": "origin"}
+        )
+
+        assert result == {
+            "platform": "telegram",
+            "chat_id": "fixed-chat",
+            "thread_id": "topic",
+            "user_id": None,
+            "user_id_alt": None,
+            "chat_type": "dm",
+            "notifier_profile": "default",
+            "delivery_mode": "notify+wake",
+            "delivery_metadata": {},
+        }
+
 
 
 class TestDeliveryParity:

@@ -796,33 +796,17 @@ class GatewayKanbanWatchersMixin:
                                 )
                                 sub_fail_counts.pop(sub_key, None)
                             except Exception as _wk_err:
-                                fails = sub_fail_counts.get(sub_key, 0) + 1
-                                sub_fail_counts[sub_key] = fails
-                                logger.warning(
-                                    "kanban notifier: wake self-post failed "
-                                    "for %s (attempt %d/%d): %s",
-                                    sub["task_id"], fails,
-                                    MAX_SEND_FAILURES, _wk_err, exc_info=True,
+                                await _handle_queued_failure(
+                                    sub=sub,
+                                    sub_key=sub_key,
+                                    cursor=d["cursor"],
+                                    old_cursor=d.get("old_cursor", 0),
+                                    board_slug=board_slug,
+                                    operation="wake-self-post",
+                                    max_failures=MAX_SEND_FAILURES,
+                                    reason="wake self-post failure",
+                                    exc=_wk_err,
                                 )
-                                if fails >= MAX_SEND_FAILURES:
-                                    logger.warning(
-                                        "kanban notifier: dropping subscription "
-                                        "%s on %s after %d consecutive wake failures",
-                                        sub["task_id"], platform_str, fails,
-                                    )
-                                    await asyncio.to_thread(self._kanban_unsub, sub, board_slug)
-                                    sub_fail_counts.pop(sub_key, None)
-                                else:
-                                    # Rewind the pre-send claim so the next
-                                    # tick retries the self-post — the event
-                                    # is NOT lost.
-                                    await asyncio.to_thread(
-                                        self._kanban_rewind,
-                                        sub,
-                                        d["cursor"],
-                                        d.get("old_cursor", 0),
-                                        board_slug,
-                                    )
                                 continue
 
                         # Delivery complete (text ping for push adapters, wake
@@ -888,16 +872,23 @@ class GatewayKanbanWatchersMixin:
                                     sub["task_id"], platform_str, sub["chat_id"], sub_profile or "default", _wake_kinds,
                                 )
                             except Exception as _wk_err:
-                                # Best-effort: the notification itself already
-                                # delivered and the cursor has advanced, so a
-                                # broken wake path must not wedge the tick — but
-                                # log at WARNING with a traceback rather than
-                                # DEBUG so a persistently-failing wake is visible
-                                # in normal logs instead of silently no-op'ing.
-                                logger.warning(
-                                    "kanban notifier: wakeup injection failed for %s: %s",
-                                    sub["task_id"], _wk_err, exc_info=True,
+                                # The passive message and any artifacts are
+                                # already checkpointed item-by-item. Rewind the
+                                # event through the common failure path so the
+                                # next tick retries only the missing wake, or a
+                                # plugin-provided fallback route can take over.
+                                await _handle_queued_failure(
+                                    sub=sub,
+                                    sub_key=sub_key,
+                                    cursor=d["cursor"],
+                                    old_cursor=d.get("old_cursor", 0),
+                                    board_slug=board_slug,
+                                    operation="wake",
+                                    max_failures=MAX_SEND_FAILURES,
+                                    reason="wake injection failure",
+                                    exc=_wk_err,
                                 )
+                                continue
                         if task_terminal:
                             await asyncio.to_thread(
                                 self._kanban_unsub, sub, board_slug,
@@ -982,15 +973,55 @@ class GatewayKanbanWatchersMixin:
         from hermes_cli import kanban_db as _kb
         from hermes_cli.plugins import get_kanban_delivery_fallback
 
-        route = get_kanban_delivery_fallback(
-            task_id=sub["task_id"],
-            event_id=int(claimed_cursor),
-            board=board or "",
-            subscription=dict(sub),
-            operation=operation,
-            failures=int(failures),
-            reason=reason,
+        hook_payload = {
+            "task_id": sub["task_id"],
+            "event_id": int(claimed_cursor),
+            "board": board or "",
+            "subscription": dict(sub),
+            "operation": operation,
+            "failures": int(failures),
+            "reason": reason,
+        }
+        delivery_metadata = sub.get("delivery_metadata")
+        policy_profile = (
+            str(delivery_metadata.get("policy_profile") or "").strip()
+            if isinstance(delivery_metadata, dict)
+            else ""
         )
+        if policy_profile:
+            try:
+                from gateway.run import _profile_runtime_scope
+                from hermes_cli.profiles import get_profile_dir
+
+                with _profile_runtime_scope(get_profile_dir(policy_profile)):
+                    route = get_kanban_delivery_fallback(**hook_payload)
+            except Exception:
+                logger.warning(
+                    "kanban notifier: invalid policy_profile %r for %s",
+                    policy_profile,
+                    sub["task_id"],
+                    exc_info=True,
+                )
+                route = None
+        else:
+            route = get_kanban_delivery_fallback(**hook_payload)
+        if route is not None:
+            try:
+                platform_name = str(
+                    route.get("platform") or ""
+                ).strip().lower()
+                if platform_name != "tui":
+                    from gateway.config import Platform
+
+                    Platform(platform_name)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "kanban notifier: ignoring fallback route with invalid "
+                    "platform %r for %s",
+                    route.get("platform") if isinstance(route, dict) else None,
+                    sub["task_id"],
+                )
+                route = None
         conn = _kb.connect(board=board)
         try:
             if route is None:
@@ -1023,7 +1054,21 @@ class GatewayKanbanWatchersMixin:
         }
         if should_skip_kanban_delivery_item(**payload):
             return True
-        return False
+        from hermes_cli import kanban_db as _kb
+
+        conn = _kb.connect(board=board)
+        try:
+            return _kb.notify_item_delivered(
+                conn,
+                task_id=sub["task_id"],
+                event_id=event_id,
+                platform=sub["platform"],
+                chat_id=sub["chat_id"],
+                thread_id=sub.get("thread_id") or "",
+                item_key=item_key,
+            )
+        finally:
+            conn.close()
 
     def _kanban_mark_item_delivered(
         self, sub: dict, event_id: int, item_key: str,
@@ -1036,6 +1081,21 @@ class GatewayKanbanWatchersMixin:
             "board": board or "",
             "subscription": dict(sub),
         }
+        from hermes_cli import kanban_db as _kb
+
+        conn = _kb.connect(board=board)
+        try:
+            _kb.mark_notify_item_delivered(
+                conn,
+                task_id=sub["task_id"],
+                event_id=event_id,
+                platform=sub["platform"],
+                chat_id=sub["chat_id"],
+                thread_id=sub.get("thread_id") or "",
+                item_key=item_key,
+            )
+        finally:
+            conn.close()
         from hermes_cli.plugins import notify_kanban_delivery_item_delivered
 
         notify_kanban_delivery_item_delivered(**payload)
