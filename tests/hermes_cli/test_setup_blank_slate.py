@@ -80,7 +80,6 @@ class TestBlankSlateMinimizeConfig:
         assert cfg["memory"]["memory_enabled"] is False
         assert cfg["memory"]["user_profile_enabled"] is False
         assert cfg["checkpoints"]["enabled"] is False
-        assert cfg["smart_model_routing"]["enabled"] is False
         assert cfg["session_reset"]["mode"] == "none"
 
 
@@ -119,4 +118,3 @@ class TestBlankSlateFork:
         assert walked["called"] is False
         # Finish-now path records the skill opt-out (no bundled skills).
         assert opted_out["value"] is True
-

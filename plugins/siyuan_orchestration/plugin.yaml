@@ -1,0 +1,28 @@
+name: siyuan-orchestration
+version: 1.0.0
+description: "SIYUAN model routing and Kanban delivery policy."
+author: SIYUAN
+manifest_version: 2
+config_schema:
+  allowed_assignees:
+    type: list
+    description: "Profiles allowed as kanban_create assignees."
+  model_routing:
+    type: dict
+    description: "Luna, Terra, Sol, and one-turn MoA routing policy."
+  completion_delivery:
+    type: dict
+    description: "Fixed destination for terminal Kanban notifications."
+  wake:
+    type: dict
+    description: "Completion delivery wake policy."
+  fallback:
+    type: dict
+    description: "Fallback-to-origin policy after delivery failures."
+hooks:
+  - transform_gateway_model_route
+  - pre_tool_call
+  - post_tool_call
+  - transform_kanban_delivery_failure
+  - pre_kanban_delivery_item
+  - post_kanban_delivery_item

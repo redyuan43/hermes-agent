@@ -6035,22 +6035,11 @@ class TurnRunner:
                 log_message="interim_assistant_callback scheduling error",
             )
 
-        smart_route = getattr(ctx, "smart_route", None)
-        if smart_route is not None:
-            turn_route = self._runner._resolve_turn_agent_config(
-                ctx.message,
-                model,
-                runtime_kwargs,
-                smart_route=smart_route,
-            )
-        else:
-            # Some test/plugin stubs still implement the historical
-            # three-argument signature; avoid passing smart_route when absent.
-            turn_route = self._runner._resolve_turn_agent_config(
-                ctx.message,
-                model,
-                runtime_kwargs,
-            )
+        turn_route = self._runner._resolve_turn_agent_config(
+            ctx.message,
+            model,
+            runtime_kwargs,
+        )
 
         # Per-platform skip_context_files — messaging platforms can opt out
         # of filesystem-heavy context-file discovery (SOUL.md, AGENTS.md,
@@ -8927,8 +8916,6 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         user_message: str,
         model: str,
         runtime_kwargs: dict,
-        *,
-        smart_route: Optional[dict] = None,
     ) -> dict:
         """Build the effective model/runtime config for a single turn.
 
@@ -8972,36 +8959,6 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             ),
         }
 
-        if smart_route and smart_route.get("decision") != "disabled":
-            if smart_route.get("use_moa"):
-                from hermes_cli.moa_config import resolve_moa_preset
-
-                moa_source = smart_route.get("moa_source") or {}
-                route["model"] = smart_route.get("moa_preset", "default")
-                route["runtime"] = {
-                    "provider": "moa",
-                    "api_key": "moa-virtual-provider",
-                    "base_url": "moa://local",
-                    "api_mode": "chat_completions",
-                    "credential_pool": None,
-                }
-                route["moa_config"] = resolve_moa_preset(
-                    moa_source, route["model"]
-                )
-            elif smart_route.get("model"):
-                route["model"] = smart_route["model"]
-                route["runtime"] = dict(
-                    smart_route.get("runtime") or route["runtime"]
-                )
-            route["signature"] = (
-                route["model"],
-                route["runtime"].get("provider"),
-                route["runtime"].get("base_url"),
-                route["runtime"].get("api_mode"),
-                route["runtime"].get("command"),
-                tuple(route["runtime"].get("args") or []),
-            )
-
         service_tier = getattr(self, "_service_tier", None)
         if not service_tier:
             route["request_overrides"] = base_request_overrides
@@ -9018,79 +8975,6 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             overrides or {},
         )
         return route
-
-    async def _prepare_smart_model_route(
-        self,
-        message: str,
-        *,
-        source: SessionSource,
-        session_key: str,
-        session_id: str,
-        user_config: dict,
-    ) -> Optional[dict]:
-        """Classify a turn off-loop before selecting/reusing the agent cache."""
-        routing_cfg = user_config.get("model_routing")
-        if routing_cfg is None:
-            routing_cfg = user_config.get("smart_model_routing")
-        if routing_cfg is None and isinstance(user_config.get("gateway"), dict):
-            gateway_cfg = user_config["gateway"]
-            routing_cfg = (
-                gateway_cfg.get("model_routing")
-                or gateway_cfg.get("smart_model_routing")
-            )
-        if not routing_cfg:
-            return None
-        from agent.smart_model_routing import normalize_model_routing_config
-
-        if not normalize_model_routing_config(routing_cfg)["enabled"]:
-            return None
-
-        await asyncio.to_thread(
-            self._rehydrate_session_model_override, session_key
-        )
-        if self._session_model_overrides.get(session_key):
-            return None
-        routing_state = await asyncio.to_thread(
-            self.session_store.get_routing_state, session_key
-        ) or {}
-        if str(routing_state.get("paused", "")).lower() == "true":
-            return None
-
-        try:
-            model, runtime = await asyncio.to_thread(
-                self._resolve_session_agent_runtime,
-                source=source,
-                session_key=session_key,
-                user_config=user_config,
-            )
-            from agent.smart_model_routing import resolve_gateway_turn_route
-
-            state = routing_state
-            smart = await asyncio.to_thread(
-                resolve_gateway_turn_route,
-                message=message,
-                config=routing_cfg,
-                primary={**runtime, "model": model},
-                session_id=session_id,
-                state=state,
-                runtime_resolver=_resolve_runtime_agent_kwargs_for_provider,
-            )
-            if smart.get("base_profile") != state.get("base_profile"):
-                await self.async_session_store.set_routing_state(
-                    session_key,
-                    {"base_profile": smart.get("base_profile")},
-                )
-            smart["moa_source"] = user_config.get("moa") or {}
-            moa_cfg = (routing_cfg or {}).get("moa")
-            smart["moa_preset"] = (
-                moa_cfg.get("preset", "default")
-                if isinstance(moa_cfg, dict)
-                else "default"
-            )
-            return smart
-        except Exception:
-            logger.debug("smart model routing failed open", exc_info=True)
-            return None
 
     def _sync_session_model_from_agent(self, session_id: str, agent: Any) -> None:
         """Persist the runtime model/provider actually used by a gateway turn.
@@ -31060,18 +30944,6 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 # the holder as None so the whole-file fallback path runs.
             except Exception as _stts_err:
                 logger.debug("Could not set up streaming TTS consumer: %s", _stts_err)
-
-        # Classifier/model routing is prepared before entering TurnRunner.
-        # _prepare_smart_model_route performs potentially blocking classification
-        # and caches provider/route state, so do it on the event loop here.
-        smart_route = await self._prepare_smart_model_route(
-            message,
-            source=source,
-            session_key=session_key,
-            session_id=session_id,
-            user_config=user_config,
-        )
-        turn_ctx.smart_route = smart_route
 
         # run_sync extracted to TurnRunner.run_sync (bound method; the
         # executor call below is unchanged).  Its closed-over locals travel

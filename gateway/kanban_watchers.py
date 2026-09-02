@@ -182,7 +182,6 @@ class GatewayKanbanWatchersMixin:
         # A genuinely dead chat still drops, just ~60s later — a fine trade
         # for an unattended gate where a false drop means silent work pileup.
         MAX_SEND_FAILURES = 12
-        MAX_ORIGIN_FALLBACK_FAILURES = 3
         sub_fail_counts: dict[tuple, int] = getattr(
             self, "_kanban_sub_fail_counts", {}
         )
@@ -191,11 +190,6 @@ class GatewayKanbanWatchersMixin:
         if not notifier_profile:
             notifier_profile = self._active_profile_name()
             self._kanban_notifier_profile = notifier_profile
-
-        def _delivery_failure_limit(sub: dict) -> int:
-            fallback_platform = bool(sub.get("fallback_platform"))
-            fallback_chat_id = bool(sub.get("fallback_chat_id"))
-            return MAX_ORIGIN_FALLBACK_FAILURES if fallback_platform and fallback_chat_id else MAX_SEND_FAILURES
 
         async def _handle_queued_failure(
             *,
@@ -223,28 +217,28 @@ class GatewayKanbanWatchersMixin:
                 max_failures,
                 failure_reason,
             )
-            if fails >= max_failures:
-                fallback = await asyncio.to_thread(
-                    self._kanban_activate_fallback,
-                    sub,
-                    cursor,
-                    old_cursor,
-                    board_slug,
-                    operation,
-                    fails,
-                    failure_reason,
+            fallback = await asyncio.to_thread(
+                self._kanban_activate_fallback,
+                sub,
+                cursor,
+                old_cursor,
+                board_slug,
+                operation,
+                fails,
+                failure_reason,
+            )
+            if fallback:
+                logger.warning(
+                    "kanban notifier: switched %s to fallback %s/%s",
+                    sub["task_id"], fallback["platform"], fallback["chat_id"],
                 )
-                if fallback:
-                    logger.warning(
-                        "kanban notifier: switched %s to fallback %s/%s",
-                        sub["task_id"], fallback["platform"], fallback["chat_id"],
-                    )
-                else:
-                    logger.warning(
-                        "kanban notifier: dropping subscription %s on %s after %d consecutive %s failures",
-                        sub["task_id"], sub["platform"], fails, operation,
-                    )
-                    await asyncio.to_thread(self._kanban_unsub, sub, board_slug)
+                sub_fail_counts.pop(sub_key, None)
+            elif fails >= max_failures:
+                logger.warning(
+                    "kanban notifier: dropping subscription %s on %s after %d consecutive %s failures",
+                    sub["task_id"], sub["platform"], fails, operation,
+                )
+                await asyncio.to_thread(self._kanban_unsub, sub, board_slug)
                 sub_fail_counts.pop(sub_key, None)
             else:
                 await asyncio.to_thread(
@@ -458,7 +452,7 @@ class GatewayKanbanWatchersMixin:
                             old_cursor=d.get("old_cursor", 0),
                             board_slug=board_slug,
                             operation="adapter-lookup",
-                            max_failures=_delivery_failure_limit(sub),
+                            max_failures=MAX_SEND_FAILURES,
                             reason=f"adapter {platform_str} unavailable",
                             exc=None,
                         )
@@ -696,7 +690,7 @@ class GatewayKanbanWatchersMixin:
                                 old_cursor=d.get("old_cursor", 0),
                                 board_slug=board_slug,
                                 operation="send",
-                                max_failures=_delivery_failure_limit(sub),
+                                max_failures=MAX_SEND_FAILURES,
                                 reason="send/summary/artifact failure",
                                 exc=exc,
                             )
@@ -999,18 +993,9 @@ class GatewayKanbanWatchersMixin:
         )
         conn = _kb.connect(board=board)
         try:
-            if route is not None:
-                return _kb.replace_notify_sub_route(
-                    conn,
-                    task_id=sub["task_id"],
-                    platform=sub["platform"],
-                    chat_id=sub["chat_id"],
-                    thread_id=sub.get("thread_id") or "",
-                    claimed_cursor=claimed_cursor,
-                    old_cursor=old_cursor,
-                    route=route,
-                )
-            return _kb.activate_notify_fallback(
+            if route is None:
+                return None
+            return _kb.replace_notify_sub_route(
                 conn,
                 task_id=sub["task_id"],
                 platform=sub["platform"],
@@ -1018,6 +1003,7 @@ class GatewayKanbanWatchersMixin:
                 thread_id=sub.get("thread_id") or "",
                 claimed_cursor=claimed_cursor,
                 old_cursor=old_cursor,
+                route=route,
             )
         finally:
             conn.close()
@@ -1037,20 +1023,7 @@ class GatewayKanbanWatchersMixin:
         }
         if should_skip_kanban_delivery_item(**payload):
             return True
-        from hermes_cli import kanban_db as _kb
-        conn = _kb.connect(board=board)
-        try:
-            return _kb.notify_item_delivered(
-                conn,
-                task_id=sub["task_id"],
-                event_id=event_id,
-                platform=sub["platform"],
-                chat_id=sub["chat_id"],
-                thread_id=sub.get("thread_id") or "",
-                item_key=item_key,
-            )
-        finally:
-            conn.close()
+        return False
 
     def _kanban_mark_item_delivered(
         self, sub: dict, event_id: int, item_key: str,
@@ -1063,20 +1036,6 @@ class GatewayKanbanWatchersMixin:
             "board": board or "",
             "subscription": dict(sub),
         }
-        from hermes_cli import kanban_db as _kb
-        conn = _kb.connect(board=board)
-        try:
-            _kb.mark_notify_item_delivered(
-                conn,
-                task_id=sub["task_id"],
-                event_id=event_id,
-                platform=sub["platform"],
-                chat_id=sub["chat_id"],
-                thread_id=sub.get("thread_id") or "",
-                item_key=item_key,
-            )
-        finally:
-            conn.close()
         from hermes_cli.plugins import notify_kanban_delivery_item_delivered
 
         notify_kanban_delivery_item_delivered(**payload)

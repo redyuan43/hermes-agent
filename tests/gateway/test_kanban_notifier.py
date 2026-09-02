@@ -593,6 +593,15 @@ def test_notifier_retries_only_missing_artifact(tmp_path, monkeypatch):
 
     adapter = RetryArtifactAdapter(second)
     runner = _make_runner(adapter)
+    delivered = set()
+    monkeypatch.setattr(
+        "hermes_cli.plugins.should_skip_kanban_delivery_item",
+        lambda **payload: payload["item_key"] in delivered,
+    )
+    monkeypatch.setattr(
+        "hermes_cli.plugins.notify_kanban_delivery_item_delivered",
+        lambda **payload: delivered.add(payload["item_key"]),
+    )
     asyncio.run(_run_one_notifier_tick(monkeypatch, runner))
     runner._running = True
     asyncio.run(_run_one_notifier_tick(monkeypatch, runner))
@@ -617,9 +626,6 @@ def test_notifier_switches_to_origin_after_three_primary_failures(
             platform="telegram",
             chat_id="primary-chat",
             notifier_profile="beta",
-            fallback_platform="telegram",
-            fallback_chat_id="origin-chat",
-            fallback_notifier_profile="default",
         )
         kb.complete_task(conn, tid, summary="done")
     finally:
@@ -631,6 +637,20 @@ def test_notifier_switches_to_origin_after_three_primary_failures(
     runner.adapters = {Platform.TELEGRAM: origin}
     runner._profile_adapters = {"beta": {Platform.TELEGRAM: primary}}
     runner._kanban_sub_fail_counts = {}
+    monkeypatch.setattr(
+        "hermes_cli.plugins.get_kanban_delivery_fallback",
+        lambda **payload: (
+            {
+                "platform": "telegram",
+                "chat_id": "origin-chat",
+                "thread_id": "",
+                "notifier_profile": "default",
+                "delivery_mode": "notify",
+            }
+            if payload["failures"] >= 3
+            else None
+        ),
+    )
     for _ in range(3):
         runner._running = True
         asyncio.run(_run_one_notifier_tick(monkeypatch, runner))

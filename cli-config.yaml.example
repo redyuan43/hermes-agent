@@ -82,27 +82,6 @@ model:
   # api_key: "your-key-here"  # Uncomment to set here instead of .env
   base_url: "https://openrouter.ai/api/v1"
 
-# Optional gateway model routing. The classifier runs once on the first turn
-# to pin Luna/Terra/Sol, then only decides whether a later turn gets a one-shot
-# MoA escalation. Keep provider credentials in the profile-scoped .env files.
-smart_model_routing:
-  enabled: false
-  classifier:
-    provider: ""
-    model: ""
-    base_url: ""
-    api_mode: ""
-  profiles:
-    luna: {provider: "", model: ""}
-    terra: {provider: "", model: ""}
-    sol: {provider: "", model: ""}
-  moa:
-    preset: default
-  trace:
-    enabled: true
-    dir: ""
-    retention_days: 7
-
   # Azure Foundry keyless auth example:
   # provider: "azure-foundry"
   # base_url: "https://<resource>.openai.azure.com/openai/v1"

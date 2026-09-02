@@ -1595,35 +1595,6 @@ If you use Codex OAuth as your main model provider, vision works automatically �
 **Vision requires a multimodal model.** If you set `provider: "main"`, make sure your endpoint supports multimodal/vision — otherwise image analysis will fail.
 :::
 
-### Smart gateway model routing
-
-The gateway can use a configured classifier to pin each conversation to a
-Luna, Terra, or Sol model. The first classifier response must be JSON:
-`{"base_route":"luna|terra|sol","use_moa":true|false}`. Later turns keep the
-pinned base and only use the classifier's `use_moa` value for a one-shot MoA
-escalation. `/model` pauses routing for that session; `/new` and `/reset`
-clear the pause.
-
-```yaml
-smart_model_routing:
-  enabled: true
-  classifier:
-    provider: openrouter
-    model: your-classifier-model
-  profiles:
-    luna: {provider: openrouter, model: your-luna-model}
-    terra: {provider: openrouter, model: your-terra-model}
-    sol: {provider: openrouter, model: your-sol-model}
-  moa:
-    preset: default
-  trace:
-    enabled: true
-    retention_days: 7
-```
-
-Routing traces are stored as private JSONL files under the Hermes home by
-default. Profile credentials are resolved inside the active profile scope.
-
 ### Environment Variables (legacy)
 
 Auxiliary models can also be configured via environment variables. However, `config.yaml` is the preferred method — it's easier to manage and supports all options including `base_url` and `api_key`.

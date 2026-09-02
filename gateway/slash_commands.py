@@ -241,12 +241,6 @@ class GatewaySlashCommandsMixin:
         # Reset the session
         new_entry = await self.async_session_store.reset_session(session_key)
 
-        # /new is a conversation boundary and therefore clears all per-session
-        # state, including temporary overrides and security state, via the
-        # shared funnel above. Also clear routing state so smart model routing
-        # does not remain paused across a new conversation.
-        await self.async_session_store.set_routing_state(session_key, None)
-
         _old_sid = old_entry.session_id if old_entry else None
 
         # Fire plugin on_session_finalize hook (session boundary).
@@ -2027,16 +2021,6 @@ class GatewaySlashCommandsMixin:
                                 _session_key,
                                 _self._session_model_overrides[_session_key],
                             )
-                            _routing_state = (
-                                await _self.async_session_store.get_routing_state(
-                                    _session_key
-                                )
-                                or {}
-                            )
-                            _routing_state["paused"] = "true"
-                            await _self.async_session_store.set_routing_state(
-                                _session_key, _routing_state
-                            )
                         except Exception:
                             logger.debug(
                                 "Failed to persist session model override",
@@ -2369,14 +2353,6 @@ class GatewaySlashCommandsMixin:
                     await self.async_session_store.set_model_override(
                         session_key,
                         self._session_model_overrides[session_key],
-                    )
-                    _routing_state = (
-                        await self.async_session_store.get_routing_state(session_key)
-                        or {}
-                    )
-                    _routing_state["paused"] = "true"
-                    await self.async_session_store.set_routing_state(
-                        session_key, _routing_state
                     )
                 except Exception:
                     logger.debug(
