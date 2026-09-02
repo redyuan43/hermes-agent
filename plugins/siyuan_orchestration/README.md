@@ -6,7 +6,7 @@ This standalone plugin owns the Nano/SIYUAN-specific orchestration policy:
 - `kanban_create` assignee validation
 - fixed Kanban completion delivery and wake mode
 - fallback to the task's origin route
-- per-message delivery item deduplication
+- fallback policy state in plugin-owned SQLite
 
 Enable it explicitly:
 
@@ -68,7 +68,11 @@ and runtime transport details.
   `plugins.entries.siyuan-orchestration.settings.allowed_assignees`.
 - `kanban.completion_delivery` moves to
   `plugins.entries.siyuan-orchestration.settings.completion_delivery`.
-- Fallback and delivery dedup state live in
+- Fallback policy state lives in
   `$HERMES_KANBAN_HOME/plugin-data/siyuan-orchestration/state.db`.
+
+Per-item delivery checkpoints remain in the generic Kanban transport database.
+They protect every notifier from duplicate summaries or attachments after a
+partial send, including deployments where this plugin is disabled.
 
 The plugin is inert when enabled without settings.

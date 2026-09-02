@@ -104,10 +104,9 @@ def test_register_declares_all_hooks_and_auxiliary_task(tmp_path: Path) -> None:
     assert set(ctx.hooks) == {
         "transform_gateway_model_route",
         "pre_tool_call",
-        "post_tool_call",
+        "transform_kanban_create_subscription",
+        "post_kanban_create_subscription",
         "transform_kanban_delivery_failure",
-        "pre_kanban_delivery_item",
-        "post_kanban_delivery_item",
     }
 
 
@@ -141,25 +140,13 @@ def test_default_configuration_is_inert(tmp_path: Path) -> None:
     assert plugin.pre_tool_call(
         tool_name="kanban_create", args={"assignee": "anyone"}
     ) is None
-    plugin.post_tool_call(
-        tool_name="kanban_create",
-        args={},
-        result=json.dumps({"ok": True, "task_id": "task-1"}),
-        status="ok",
-    )
-    item = {
-        "task_id": "task-1",
-        "event_id": 1,
-        "item_key": "summary",
-        "board": "default",
-        "subscription": {"platform": "telegram", "chat_id": "chat"},
-    }
-    assert plugin.pre_kanban_delivery_item(**item) is None
-    plugin.post_kanban_delivery_item(**item)
+    assert plugin.transform_kanban_create_subscription(
+        profile_name="default"
+    ) is None
     assert plugin.transform_kanban_delivery_failure(
         task_id="task-1",
         board="default",
-        subscription=item["subscription"],
+        subscription={"platform": "telegram", "chat_id": "chat"},
         failures=99,
     ) is None
     assert not ctx.llm.calls
@@ -253,26 +240,6 @@ def kanban_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return home
 
 
-def _create_task_with_origin_subscription() -> str:
-    from hermes_cli import kanban_db as kb
-
-    conn = kb.connect()
-    try:
-        task_id = kb.create_task(conn, title="plugin test", assignee="nano1")
-        kb.add_notify_sub(
-            conn,
-            task_id=task_id,
-            platform="telegram",
-            chat_id="origin-chat",
-            thread_id="origin-thread",
-            notifier_profile="origin-profile",
-            delivery_mode="notify+wake",
-        )
-        return task_id
-    finally:
-        conn.close()
-
-
 def _delivery_settings() -> dict[str, Any]:
     return {
         "completion_delivery": {
@@ -286,51 +253,44 @@ def _delivery_settings() -> dict[str, Any]:
     }
 
 
-def test_successful_create_replaces_origin_subscription_and_snapshots_fallback(
+def test_create_subscription_selects_fixed_route_and_snapshots_fallback(
     tmp_path: Path,
     kanban_home: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from hermes_cli import kanban_db as kb
-
-    task_id = _create_task_with_origin_subscription()
     ctx = FakeContext(tmp_path, _delivery_settings())
     plugin = SiyuanOrchestrationPlugin(ctx)
-    monkeypatch.setattr(
-        "plugins.siyuan_orchestration._origin_route",
-        lambda: {
-            "platform": "telegram",
-            "chat_id": "origin-chat",
-            "thread_id": "origin-thread",
-            "notifier_profile": "origin-profile",
-            "chat_type": "dm",
-        },
-    )
     monkeypatch.setattr(
         "hermes_cli.profiles.profile_exists",
         lambda _name: True,
     )
-
-    plugin.post_tool_call(
-        tool_name="kanban_create",
-        args={},
-        result=json.dumps({"ok": True, "task_id": task_id}),
-        status="ok",
+    origin = {
+        "platform": "telegram",
+        "chat_id": "origin-chat",
+        "thread_id": "origin-thread",
+        "notifier_profile": "origin-profile",
+        "chat_type": "dm",
+    }
+    selected = plugin.transform_kanban_create_subscription(
+        profile_name="creator-profile"
+    )["route"]
+    assert selected["chat_id"] == "fixed-chat"
+    assert selected["notifier_profile"] == "siyuan-mobile"
+    assert selected["delivery_metadata"] == {
+        "policy_plugin": "siyuan-orchestration",
+        "policy_profile": "creator-profile",
+    }
+    plugin.post_kanban_create_subscription(
+        task_id="task-fixed",
+        board="default",
+        origin=origin,
+        subscription=selected,
     )
 
-    conn = kb.connect()
-    try:
-        subs = kb.list_notify_subs(conn, task_id)
-    finally:
-        conn.close()
-    assert [(sub["chat_id"], sub["delivery_mode"]) for sub in subs] == [
-        ("fixed-chat", "notify+wake")
-    ]
-
     fallback = plugin.transform_kanban_delivery_failure(
-        task_id=task_id,
+        task_id="task-fixed",
         board="default",
-        subscription=subs[0],
+        subscription=selected,
         failures=2,
     )
     assert fallback["route"]["chat_id"] == "origin-chat"
@@ -385,41 +345,6 @@ def test_fallback_waits_for_threshold_and_stops_after_route_changes(
     ) is None
 
 
-def test_delivery_item_dedup_is_bound_to_event_route_and_item(
-    tmp_path: Path,
-    kanban_home: Path,
-) -> None:
-    plugin = SiyuanOrchestrationPlugin(
-        FakeContext(tmp_path, _delivery_settings())
-    )
-    route = {
-        "platform": "telegram",
-        "chat_id": "chat-a",
-        "thread_id": "",
-        "notifier_profile": "profile-a",
-    }
-    payload = {
-        "task_id": "task-1",
-        "event_id": 11,
-        "item_key": "artifact:0",
-        "board": "default",
-        "subscription": route,
-    }
-
-    assert plugin.pre_kanban_delivery_item(**payload) is None
-    plugin.post_kanban_delivery_item(**payload)
-    assert plugin.pre_kanban_delivery_item(**payload) == {"action": "skip"}
-    assert plugin.pre_kanban_delivery_item(
-        **{**payload, "event_id": 12}
-    ) is None
-    assert plugin.pre_kanban_delivery_item(
-        **{
-            **payload,
-            "subscription": {**route, "chat_id": "chat-b"},
-        }
-    ) is None
-
-
 def test_shared_sqlite_permissions_and_safe_journal_mode(
     tmp_path: Path,
     kanban_home: Path,
@@ -429,12 +354,11 @@ def test_shared_sqlite_permissions_and_safe_journal_mode(
     plugin = SiyuanOrchestrationPlugin(
         FakeContext(tmp_path, _delivery_settings())
     )
-    plugin.post_kanban_delivery_item(
-        task_id="task-1",
-        event_id=1,
-        item_key="summary",
+    plugin._save_fallback(
         board="default",
-        subscription={"platform": "telegram", "chat_id": "chat"},
+        task_id="task-1",
+        primary={"platform": "telegram", "chat_id": "fixed"},
+        origin={"platform": "telegram", "chat_id": "origin"},
     )
     path = (
         kanban_home

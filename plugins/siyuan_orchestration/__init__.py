@@ -138,22 +138,6 @@ def _connect_shared_db() -> sqlite3.Connection:
             created_at INTEGER NOT NULL,
             PRIMARY KEY (board, task_id, primary_route_key)
         );
-
-        CREATE TABLE IF NOT EXISTS delivery_items (
-            board TEXT NOT NULL,
-            task_id TEXT NOT NULL,
-            event_id INTEGER NOT NULL,
-            subscription_route_key TEXT NOT NULL,
-            item_key TEXT NOT NULL,
-            delivered_at INTEGER NOT NULL,
-            PRIMARY KEY (
-                board,
-                task_id,
-                event_id,
-                subscription_route_key,
-                item_key
-            )
-        );
         """
     )
     try:
@@ -196,60 +180,6 @@ def _profile_scope(profile_name: str) -> Iterator[None]:
     finally:
         reset_secret_scope(secret_token)
         reset_hermes_home_override(home_token)
-
-
-def _origin_route() -> Optional[dict[str, Any]]:
-    try:
-        from gateway.session_context import get_session_env
-
-        platform = str(
-            get_session_env("HERMES_SESSION_PLATFORM", "") or ""
-        ).strip().lower()
-        chat_id = str(
-            get_session_env("HERMES_SESSION_CHAT_ID", "") or ""
-        ).strip()
-        if not platform or not chat_id:
-            session_key = str(
-                get_session_env("HERMES_SESSION_KEY", "")
-                or os.environ.get("HERMES_SESSION_KEY", "")
-            ).strip()
-            if not session_key:
-                return None
-            platform, chat_id = "tui", session_key
-        thread_id = str(
-            get_session_env("HERMES_SESSION_THREAD_ID", "") or ""
-        ).strip()
-        chat_type = str(
-            get_session_env("HERMES_SESSION_CHAT_TYPE", "") or "dm"
-        ).strip()
-        profile = str(
-            get_session_env("HERMES_SESSION_PROFILE", "")
-            or os.environ.get("HERMES_PROFILE", "")
-        ).strip()
-        metadata: dict[str, Any] = {}
-        if thread_id:
-            metadata["thread_id"] = thread_id
-        if chat_type:
-            metadata["chat_type"] = chat_type
-        return {
-            "platform": platform,
-            "chat_id": chat_id,
-            "thread_id": thread_id,
-            "user_id": str(
-                get_session_env("HERMES_SESSION_USER_ID", "") or ""
-            ).strip()
-            or None,
-            "user_id_alt": str(
-                get_session_env("HERMES_SESSION_USER_ID_ALT", "") or ""
-            ).strip()
-            or None,
-            "chat_type": chat_type or "dm",
-            "notifier_profile": profile or None,
-            "delivery_metadata": metadata,
-        }
-    except Exception:
-        logger.debug("Could not snapshot the Kanban origin route", exc_info=True)
-        return None
 
 
 class SiyuanOrchestrationPlugin:
@@ -397,6 +327,7 @@ class SiyuanOrchestrationPlugin:
                 schema_name="siyuan_model_route",
                 temperature=0,
                 max_tokens=64,
+                timeout=20,
                 purpose="SIYUAN gateway model routing",
                 task=AUXILIARY_TASK,
             )
@@ -541,10 +472,11 @@ class SiyuanOrchestrationPlugin:
         ).strip()
         return mode if mode in _DELIVERY_MODES else "notify"
 
-    def _completion_delivery_configured(self) -> bool:
-        return bool(_mapping(self._config("completion_delivery", None)))
-
-    def _resolve_delivery(self) -> Optional[dict[str, Any]]:
+    def _resolve_delivery(
+        self,
+        *,
+        policy_profile: str,
+    ) -> Optional[dict[str, Any]]:
         raw = self._config("completion_delivery", None)
         if not raw:
             return None
@@ -595,15 +527,11 @@ class SiyuanOrchestrationPlugin:
             "thread_id": thread_id,
             "notifier_profile": sender_profile,
             "delivery_mode": self._delivery_mode(),
+            "delivery_metadata": {
+                "policy_plugin": PLUGIN_ID,
+                "policy_profile": policy_profile or "default",
+            },
         }
-
-    @staticmethod
-    def _parse_create_result(result: Any) -> Optional[dict[str, Any]]:
-        parsed = _json_object(result)
-        if not parsed or parsed.get("ok") is not True:
-            return None
-        task_id = str(parsed.get("task_id") or "").strip()
-        return parsed if task_id else None
 
     def _save_fallback(
         self,
@@ -637,73 +565,45 @@ class SiyuanOrchestrationPlugin:
         finally:
             conn.close()
 
-    def post_tool_call(
+    def transform_kanban_create_subscription(
         self,
         *,
-        tool_name: str = "",
-        args: Any = None,
-        result: Any = None,
-        status: str = "",
+        profile_name: str = "",
+        **_: Any,
+    ) -> Optional[dict[str, Any]]:
+        delivery = self._resolve_delivery(policy_profile=profile_name)
+        return {"route": delivery} if delivery is not None else None
+
+    def post_kanban_create_subscription(
+        self,
+        *,
+        task_id: str = "",
+        board: str = "",
+        origin: Any = None,
+        subscription: Any = None,
         **_: Any,
     ) -> None:
-        if tool_name != "kanban_create" or status not in {"", "ok"}:
+        primary = _mapping(subscription)
+        fallback = _mapping(origin)
+        metadata = _mapping(primary.get("delivery_metadata"))
+        if (
+            not task_id
+            or metadata.get("policy_plugin") != PLUGIN_ID
+            or not fallback
+            or _route_key(primary) == _route_key(fallback)
+        ):
             return
-        parsed = self._parse_create_result(result)
-        delivery = self._resolve_delivery()
-        if parsed is None or delivery is None:
-            return
-        task_id = str(parsed["task_id"])
-        board_arg = _mapping(args).get("board")
-        board_value = (
-            str(board_arg).strip() if board_arg is not None else ""
-        )
-        board = _board_name(board_value)
-        origin = _origin_route()
+        fallback["delivery_mode"] = primary.get("delivery_mode") or "notify"
         try:
-            from hermes_cli import kanban_db as kb
-
-            if origin is not None and _route_key(origin) != _route_key(delivery):
-                fallback = dict(origin)
-                fallback["delivery_mode"] = delivery["delivery_mode"]
-                self._save_fallback(
-                    board=board,
-                    task_id=task_id,
-                    primary=delivery,
-                    origin=fallback,
-                )
-            conn = kb.connect(board=board_value or None)
-            try:
-                kb.add_notify_sub(
-                    conn,
-                    task_id=task_id,
-                    platform=delivery["platform"],
-                    chat_id=delivery["chat_id"],
-                    thread_id=delivery["thread_id"],
-                    notifier_profile=delivery["notifier_profile"],
-                    delivery_mode=delivery["delivery_mode"],
-                )
-                if origin is not None:
-                    same_route = (
-                        str(origin.get("platform") or "").lower()
-                        == delivery["platform"]
-                        and str(origin.get("chat_id") or "")
-                        == delivery["chat_id"]
-                        and str(origin.get("thread_id") or "")
-                        == delivery["thread_id"]
-                    )
-                    if not same_route:
-                        kb.remove_notify_sub(
-                            conn,
-                            task_id=task_id,
-                            platform=str(origin["platform"]),
-                            chat_id=str(origin["chat_id"]),
-                            thread_id=str(origin.get("thread_id") or ""),
-                        )
-            finally:
-                conn.close()
+            self._save_fallback(
+                board=_board_name(board),
+                task_id=str(task_id),
+                primary=primary,
+                origin=fallback,
+            )
         except Exception:
             logger.warning(
-                "Could not install SIYUAN Kanban completion delivery",
+                "Could not persist SIYUAN Kanban fallback route",
                 exc_info=True,
             )
 
@@ -716,8 +616,6 @@ class SiyuanOrchestrationPlugin:
         failures: int = 0,
         **_: Any,
     ) -> Optional[dict[str, Any]]:
-        if not self._completion_delivery_configured():
-            return None
         fallback_cfg = _mapping(self._config("fallback", {}))
         if not _enabled(fallback_cfg.get("enabled"), True):
             return None
@@ -756,102 +654,28 @@ class SiyuanOrchestrationPlugin:
         finally:
             conn.close()
 
-    def pre_kanban_delivery_item(
-        self,
-        *,
-        task_id: str = "",
-        event_id: int = 0,
-        item_key: str = "",
-        board: str = "",
-        subscription: Any = None,
-        **_: Any,
-    ) -> Optional[dict[str, str]]:
-        if not self._completion_delivery_configured():
-            return None
-        route = _mapping(subscription)
-        if not task_id or not item_key or not route:
-            return None
-        conn = _connect_shared_db()
-        try:
-            row = conn.execute(
-                """
-                SELECT 1 FROM delivery_items
-                 WHERE board = ? AND task_id = ? AND event_id = ?
-                   AND subscription_route_key = ? AND item_key = ?
-                """,
-                (
-                    _board_name(board),
-                    str(task_id),
-                    int(event_id),
-                    _route_key(route),
-                    str(item_key),
-                ),
-            ).fetchone()
-            return {"action": "skip"} if row is not None else None
-        finally:
-            conn.close()
-
-    def post_kanban_delivery_item(
-        self,
-        *,
-        task_id: str = "",
-        event_id: int = 0,
-        item_key: str = "",
-        board: str = "",
-        subscription: Any = None,
-        **_: Any,
-    ) -> None:
-        if not self._completion_delivery_configured():
-            return
-        route = _mapping(subscription)
-        if not task_id or not item_key or not route:
-            return
-        conn = _connect_shared_db()
-        try:
-            with _immediate(conn):
-                conn.execute(
-                    """
-                    INSERT OR IGNORE INTO delivery_items
-                        (board, task_id, event_id, subscription_route_key,
-                         item_key, delivered_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        _board_name(board),
-                        str(task_id),
-                        int(event_id),
-                        _route_key(route),
-                        str(item_key),
-                        int(time.time()),
-                    ),
-                )
-        finally:
-            conn.close()
-
-
 def register(ctx: Any) -> None:
     plugin = SiyuanOrchestrationPlugin(ctx)
     ctx.register_auxiliary_task(
         key=AUXILIARY_TASK,
         display_name="SIYUAN route classifier",
         description="Classify Luna, Terra, Sol, and one-turn MoA routes.",
-        defaults={"provider": "auto", "model": "", "timeout": 30},
+        defaults={"provider": "auto", "model": "", "timeout": 20},
     )
     ctx.register_hook(
         "transform_gateway_model_route",
         plugin.transform_gateway_model_route,
     )
     ctx.register_hook("pre_tool_call", plugin.pre_tool_call)
-    ctx.register_hook("post_tool_call", plugin.post_tool_call)
+    ctx.register_hook(
+        "transform_kanban_create_subscription",
+        plugin.transform_kanban_create_subscription,
+    )
+    ctx.register_hook(
+        "post_kanban_create_subscription",
+        plugin.post_kanban_create_subscription,
+    )
     ctx.register_hook(
         "transform_kanban_delivery_failure",
         plugin.transform_kanban_delivery_failure,
-    )
-    ctx.register_hook(
-        "pre_kanban_delivery_item",
-        plugin.pre_kanban_delivery_item,
-    )
-    ctx.register_hook(
-        "post_kanban_delivery_item",
-        plugin.post_kanban_delivery_item,
     )

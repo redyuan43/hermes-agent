@@ -863,6 +863,129 @@ def _migrate_to_39(results: Dict[str, Any], quiet: bool) -> None:
             )
 
 
+def _migrate_to_40(results: Dict[str, Any], quiet: bool) -> None:
+    """Move Nano/SIYUAN orchestration policy out of core config."""
+    _c = _cfg()
+    config = _c.read_raw_config()
+    changed = False
+    migrated: List[str] = []
+
+    routing = None
+    routing_owner = None
+    for owner, key in (
+        (config, "smart_model_routing"),
+        (config, "model_routing"),
+        (
+            config.get("gateway")
+            if isinstance(config.get("gateway"), dict)
+            else {},
+            "smart_model_routing",
+        ),
+        (
+            config.get("gateway")
+            if isinstance(config.get("gateway"), dict)
+            else {},
+            "model_routing",
+        ),
+    ):
+        value = owner.get(key) if isinstance(owner, dict) else None
+        if isinstance(value, dict) and value:
+            routing = copy.deepcopy(value)
+            routing_owner = (owner, key)
+            break
+
+    kanban = config.get("kanban")
+    allowed = (
+        copy.deepcopy(kanban.get("allowed_assignees"))
+        if isinstance(kanban, dict) and kanban.get("allowed_assignees")
+        else None
+    )
+    delivery = (
+        copy.deepcopy(kanban.get("completion_delivery"))
+        if isinstance(kanban, dict) and kanban.get("completion_delivery")
+        else None
+    )
+    if routing is None and allowed is None and delivery is None:
+        return
+
+    plugins = config.get("plugins")
+    if not isinstance(plugins, dict):
+        plugins = {}
+    entries = plugins.get("entries")
+    if not isinstance(entries, dict):
+        entries = {}
+    entry = entries.get("siyuan-orchestration")
+    if not isinstance(entry, dict):
+        entry = {}
+    settings = entry.get("settings")
+    if not isinstance(settings, dict):
+        settings = {}
+
+    if routing is not None and "model_routing" not in settings:
+        settings["model_routing"] = routing
+        owner, key = routing_owner
+        owner.pop(key, None)
+        migrated.append(key)
+        changed = True
+
+        classifier = routing.get("classifier")
+        if isinstance(classifier, dict):
+            auxiliary = config.get("auxiliary")
+            if not isinstance(auxiliary, dict):
+                auxiliary = {}
+            if "siyuan_route_classifier" not in auxiliary:
+                classifier_slot = {
+                    key: copy.deepcopy(classifier[key])
+                    for key in ("provider", "model", "base_url", "api_mode")
+                    if classifier.get(key)
+                }
+                if classifier_slot:
+                    auxiliary["siyuan_route_classifier"] = classifier_slot
+                    config["auxiliary"] = auxiliary
+                    migrated.append("auxiliary.siyuan_route_classifier")
+            if classifier.get("api_key_env"):
+                results["warnings"].append(
+                    "smart_model_routing.classifier.api_key_env was not copied; "
+                    "configure the classifier provider credential in the "
+                    "profile-owned provider settings"
+                )
+
+    if allowed is not None and "allowed_assignees" not in settings:
+        settings["allowed_assignees"] = allowed
+        kanban.pop("allowed_assignees", None)
+        migrated.append("kanban.allowed_assignees")
+        changed = True
+    if delivery is not None and "completion_delivery" not in settings:
+        settings["completion_delivery"] = delivery
+        kanban.pop("completion_delivery", None)
+        migrated.append("kanban.completion_delivery")
+        changed = True
+
+    if not changed:
+        return
+    entry["settings"] = settings
+    entries["siyuan-orchestration"] = entry
+    plugins["entries"] = entries
+    enabled = plugins.get("enabled")
+    enabled = list(enabled) if isinstance(enabled, list) else []
+    if "siyuan-orchestration" not in enabled:
+        enabled.append("siyuan-orchestration")
+    plugins["enabled"] = enabled
+    config["plugins"] = plugins
+    if isinstance(kanban, dict):
+        config["kanban"] = kanban
+    _c._persist_migration(config)
+    results["config_added"].append(
+        "migrated Nano orchestration policy to "
+        "plugins.entries.siyuan-orchestration.settings"
+    )
+    if not quiet:
+        print(
+            "  ✓ Moved Nano orchestration policy into the "
+            "siyuan-orchestration plugin: " + ", ".join(migrated)
+        )
+
+
 #: Registry of (target_version, migration_fn), strictly ascending. The driver
 #: applies every entry whose target version is greater than the on-disk
 #: observe earlier steps' writes via read_raw_config() (filesystem state).
@@ -890,6 +1013,7 @@ MIGRATIONS: Tuple[Tuple[int, Callable[[Dict[str, Any], bool], None]], ...] = (
     (37, _migrate_to_37),
     (38, _migrate_to_38),
     (39, _migrate_to_39),
+    (40, _migrate_to_40),
 )
 
 
