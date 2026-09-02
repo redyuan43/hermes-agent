@@ -20,6 +20,8 @@ from hermes_cli.plugins import (
     _dispatch_pre_tool_call_hooks,
     get_plugin_command_handler,
     get_plugin_commands,
+    get_gateway_model_route,
+    get_kanban_delivery_fallback,
     get_pre_tool_call_block_message,
     get_pre_verify_continue_message,
     has_middleware,
@@ -842,6 +844,79 @@ class TestPluginHooks:
             max_tokens=8192,
         )
         assert results == [{"seen": 2, "mc": 5, "tc": 3}]
+
+    def test_gateway_model_route_is_declarative_and_first_valid_wins(
+        self, monkeypatch
+    ):
+        import hermes_cli.plugins as plugins_mod
+
+        manager = PluginManager()
+        manager._discovered = True
+        manager._hooks["transform_gateway_model_route"] = [
+            lambda **_: {"provider": "bad", "model": "missing-action"},
+            lambda **_: {
+                "action": "route",
+                "provider": "openrouter",
+                "model": "target-model",
+                "api_key": "must-not-flow",
+                "reason": "classified",
+            },
+            lambda **_: {
+                "action": "route",
+                "provider": "other",
+                "model": "ignored",
+            },
+        ]
+        monkeypatch.setattr(plugins_mod, "get_plugin_manager", lambda: manager)
+
+        result = get_gateway_model_route(
+            message="hello",
+            session_key="route-key",
+            session_id="segment-id",
+            conversation_id="conversation-id",
+            platform="api_server",
+            profile_name="default",
+            primary_model="primary-model",
+            primary_provider="primary-provider",
+        )
+
+        assert result == {
+            "provider": "openrouter",
+            "model": "target-model",
+            "reason": "classified",
+        }
+
+    def test_kanban_fallback_route_is_sanitized(self, monkeypatch):
+        import hermes_cli.plugins as plugins_mod
+
+        manager = PluginManager()
+        manager._discovered = True
+        manager._hooks["transform_kanban_delivery_failure"] = [
+            lambda **_: {
+                "route": {
+                    "platform": " Telegram ",
+                    "chat_id": " chat-2 ",
+                    "thread_id": " topic ",
+                    "delivery_mode": "wake",
+                    "delivery_metadata": {"reply_to_message_id": "42"},
+                }
+            }
+        ]
+        monkeypatch.setattr(plugins_mod, "get_plugin_manager", lambda: manager)
+
+        result = get_kanban_delivery_fallback(task_id="task-1")
+
+        assert result == {
+            "platform": "telegram",
+            "chat_id": "chat-2",
+            "thread_id": "topic",
+            "user_id": None,
+            "user_id_alt": None,
+            "chat_type": "dm",
+            "notifier_profile": None,
+            "delivery_mode": "wake",
+            "delivery_metadata": {"reply_to_message_id": "42"},
+        }
 
 
 

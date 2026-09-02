@@ -174,6 +174,55 @@ def test_notify_sub_user_id_alt_persists_and_backfills_legacy_rows(kanban_home):
     assert subs[0]["user_id_alt"] == "union-id"
 
 
+def test_replace_notify_sub_route_rewinds_claimed_cursor(kanban_home):
+    conn = kb.connect()
+    try:
+        tid = kb.create_task(conn, title="replace route", assignee="worker1")
+        kb.add_notify_sub(
+            conn,
+            task_id=tid,
+            platform="telegram",
+            chat_id="primary",
+            delivery_mode="notify+wake",
+        )
+        kb.complete_task(conn, tid, summary="done")
+        old_cursor, claimed_cursor, events = kb.claim_unseen_events_for_sub(
+            conn,
+            task_id=tid,
+            platform="telegram",
+            chat_id="primary",
+            kinds=["completed"],
+        )
+        assert len(events) == 1
+
+        replaced = kb.replace_notify_sub_route(
+            conn,
+            task_id=tid,
+            platform="telegram",
+            chat_id="primary",
+            thread_id="",
+            claimed_cursor=claimed_cursor,
+            old_cursor=old_cursor,
+            route={
+                "platform": "matrix",
+                "chat_id": "!fallback:example.test",
+                "notifier_profile": "sender",
+                "delivery_mode": "wake",
+            },
+        )
+        subs = kb.list_notify_subs(conn, tid)
+    finally:
+        conn.close()
+
+    assert replaced is not None
+    assert len(subs) == 1
+    assert subs[0]["platform"] == "matrix"
+    assert subs[0]["chat_id"] == "!fallback:example.test"
+    assert subs[0]["notifier_profile"] == "sender"
+    assert subs[0]["delivery_mode"] == "wake"
+    assert subs[0]["last_event_id"] == old_cursor
+
+
 def test_child_task_inherits_parent_chat_type(kanban_home):
     """Graph children inherit the parent's chat_type alongside its ACK edge and
     delivery_mode, so a woken child notification keys to the same session as

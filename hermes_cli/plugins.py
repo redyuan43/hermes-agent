@@ -171,6 +171,17 @@ VALID_HOOKS: Set[str] = {
     "transform_llm_output",
     "pre_llm_call",
     "post_llm_call",
+    # Gateway turn-routing decision. Fired after the session's primary
+    # provider/model has been resolved and before target credentials,
+    # reasoning settings, and the agent-cache signature are resolved.
+    # The first callback returning a valid declarative route wins.
+    #
+    # Kwargs: surface, message, session_key, session_id, conversation_id,
+    #   platform, profile_name, current={provider, model}.
+    # Return: {"action": "route", "provider": str, "model": str,
+    #          "reason": str | None}. Credentials and runtime objects are
+    # deliberately host-owned and never exposed to callbacks.
+    "transform_gateway_model_route",
     # Streaming LLM output observer hooks. Fired asynchronously off the token
     # path by agent.plugin_stream_hooks; callbacks observe immutable normalized
     # text/lifecycle payloads and cannot transform the stream.
@@ -352,6 +363,18 @@ VALID_HOOKS: Set[str] = {
     #     skipped_nonspawnable, skipped_locked).
     #   Privacy: result carries task ids, assignees, and workspace paths.
     "on_kanban_dispatch_tick",
+    # Kanban notification delivery extension points. These keep policy and
+    # partial-delivery state outside the board database while the gateway
+    # remains the generic transport executor.
+    #
+    # pre_kanban_delivery_item may return {"action": "skip"} when a plugin has
+    # already checkpointed the item. post_kanban_delivery_item is observer-only
+    # and fires after adapter acceptance. transform_kanban_delivery_failure may
+    # return {"route": {platform, chat_id, thread_id?, user_id?,
+    # notifier_profile?, delivery_mode?}}; the first valid route wins.
+    "pre_kanban_delivery_item",
+    "post_kanban_delivery_item",
+    "transform_kanban_delivery_failure",
     # Gateway platform-boundary observer hooks (#64176). Observer-only; each
     # callback isolated by invoke_hook. Payloads are normalized envelopes only,
     # never raw platform SDK objects (per #64176 / #64182 ground rule). This
@@ -396,6 +419,9 @@ VALID_HOOKS: Set[str] = {
 # Support for a shell response shape can lift an event out of this set.
 SHELL_UNSUPPORTED_HOOKS: Set[str] = {
     "transform_api_error_classification",
+    "transform_gateway_model_route",
+    "pre_kanban_delivery_item",
+    "transform_kanban_delivery_failure",
 }
 
 # Timeout coverage is an allowlist for the agent-turn hot path, not every
@@ -430,12 +456,16 @@ _HOOK_TIMEOUT_BOUNDED_HOOKS: Set[str] = {
     "transform_llm_output",
     "pre_llm_call",
     "post_llm_call",
+    "transform_gateway_model_route",
     "pre_api_request",
     "post_api_request",
     "api_request_error",
     "pre_verify",
     "on_session_start",
     "on_session_end",
+    "pre_kanban_delivery_item",
+    "post_kanban_delivery_item",
+    "transform_kanban_delivery_failure",
 }
 
 # Policy hooks: timeout / still-running must fail closed (block the tool).
@@ -6917,6 +6947,132 @@ def get_pre_verify_continue_message(
             return message.strip()
 
     return None
+
+
+def get_gateway_model_route(
+    *,
+    message: str,
+    session_key: str,
+    session_id: str,
+    conversation_id: str,
+    platform: str,
+    profile_name: str,
+    primary_model: str,
+    primary_provider: str,
+) -> Optional[Dict[str, Any]]:
+    """Return the first valid plugin-provided gateway turn route.
+
+    The hook runs after the primary route has been resolved but before the
+    target runtime and agent-cache signature are built. Invalid results fail
+    open to the primary route. Plugins declare only provider/model identity;
+    credentials and transport runtime stay host-owned.
+    """
+    hook_results = invoke_hook(
+        "transform_gateway_model_route",
+        surface="gateway",
+        message=message,
+        session_key=session_key,
+        session_id=session_id,
+        conversation_id=conversation_id,
+        platform=platform,
+        profile_name=profile_name,
+        current={
+            "provider": primary_provider,
+            "model": primary_model,
+        },
+    )
+    winner: Optional[Dict[str, Any]] = None
+    skipped_valid = 0
+    for result in hook_results:
+        if not isinstance(result, Mapping):
+            continue
+        if str(result.get("action") or "").strip().lower() != "route":
+            continue
+        provider = str(result.get("provider") or "").strip()
+        model = str(result.get("model") or "").strip()
+        if not provider or not model:
+            continue
+        candidate: Dict[str, Any] = {
+            "provider": provider,
+            "model": model,
+        }
+        reason = str(result.get("reason") or "").strip()
+        if reason:
+            candidate["reason"] = reason
+        if winner is None:
+            winner = candidate
+        else:
+            skipped_valid += 1
+    if skipped_valid:
+        logger.warning(
+            "Multiple plugins returned gateway model routes; using the first "
+            "valid result and skipping %d later result(s)",
+            skipped_valid,
+        )
+    return winner
+
+
+def should_skip_kanban_delivery_item(**payload: Any) -> bool:
+    """Return whether a plugin has already checkpointed a delivery item."""
+    for result in invoke_hook("pre_kanban_delivery_item", **payload):
+        if not isinstance(result, Mapping):
+            continue
+        if str(result.get("action") or "").strip().lower() == "skip":
+            return True
+    return False
+
+
+def notify_kanban_delivery_item_delivered(**payload: Any) -> None:
+    """Notify plugins after one Kanban notification item is accepted."""
+    invoke_hook("post_kanban_delivery_item", **payload)
+
+
+def get_kanban_delivery_fallback(**payload: Any) -> Optional[Dict[str, Any]]:
+    """Return the first valid plugin-provided replacement delivery route."""
+    winner: Optional[Dict[str, Any]] = None
+    skipped_valid = 0
+    for result in invoke_hook("transform_kanban_delivery_failure", **payload):
+        if not isinstance(result, Mapping):
+            continue
+        raw_route = result.get("route")
+        if not isinstance(raw_route, Mapping):
+            continue
+        platform = str(raw_route.get("platform") or "").strip().lower()
+        chat_id = str(raw_route.get("chat_id") or "").strip()
+        if not platform or not chat_id:
+            continue
+        route = {
+            "platform": platform,
+            "chat_id": chat_id,
+            "thread_id": str(raw_route.get("thread_id") or "").strip(),
+            "user_id": str(raw_route.get("user_id") or "").strip() or None,
+            "user_id_alt": (
+                str(raw_route.get("user_id_alt") or "").strip() or None
+            ),
+            "chat_type": str(raw_route.get("chat_type") or "").strip() or "dm",
+            "notifier_profile": (
+                str(raw_route.get("notifier_profile") or "").strip() or None
+            ),
+            "delivery_mode": (
+                str(raw_route.get("delivery_mode") or "").strip() or "notify"
+            ),
+            "delivery_metadata": (
+                dict(raw_route.get("delivery_metadata"))
+                if isinstance(raw_route.get("delivery_metadata"), Mapping)
+                else {}
+            ),
+        }
+        if winner is None:
+            winner = route
+        else:
+            skipped_valid += 1
+    if skipped_valid:
+        logger.warning(
+            "Multiple plugins returned Kanban fallback routes; using the first "
+            "valid result and skipping %d later result(s)",
+            skipped_valid,
+        )
+    return winner
 
 
 def get_plugin_error_classification(

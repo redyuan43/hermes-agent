@@ -108,6 +108,35 @@ def test_resolve_runtime_agent_kwargs_preserves_request_overrides(monkeypatch):
     }
 
 
+def test_explicit_provider_runtime_uses_target_model(monkeypatch):
+    seen = {}
+
+    def _resolve_runtime_provider(**kwargs):
+        seen.update(kwargs)
+        return {
+            "api_key": "***",
+            "base_url": "https://example.test/v1",
+            "provider": "custom",
+            "api_mode": "codex_responses",
+        }
+
+    monkeypatch.setattr(
+        "hermes_cli.runtime_provider.resolve_runtime_provider",
+        _resolve_runtime_provider,
+    )
+
+    result = gateway_run._resolve_runtime_agent_kwargs_for_provider(
+        "custom:target",
+        target_model="target-model",
+    )
+
+    assert seen == {
+        "requested": "custom:target",
+        "target_model": "target-model",
+    }
+    assert result["provider"] == "custom"
+
+
 def test_turn_route_preserves_provider_request_overrides_without_fast_mode():
     runner = _make_runner()
     runner._service_tier = None

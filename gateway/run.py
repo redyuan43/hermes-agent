@@ -3361,14 +3361,20 @@ def _resolve_gateway_model_context(model: Optional[str] = None) -> _GatewayModel
     )
 
 
-def _resolve_runtime_agent_kwargs_for_provider(provider: str) -> dict:
+def _resolve_runtime_agent_kwargs_for_provider(
+    provider: str,
+    target_model: Optional[str] = None,
+) -> dict:
     """Resolve runtime credentials for a specific provider (e.g. from channel override)."""
     from hermes_cli.runtime_provider import (
         resolve_runtime_provider,
         format_runtime_provider_error,
     )
     try:
-        runtime = resolve_runtime_provider(requested=provider)
+        runtime = resolve_runtime_provider(
+            requested=provider,
+            target_model=target_model,
+        )
     except Exception as exc:
         raise RuntimeError(format_runtime_provider_error(exc)) from exc
     return {
@@ -5856,6 +5862,73 @@ class TurnRunner:
                 "api_calls": 0,
                 "tools": [],
             }
+
+        # A plugin may declaratively select a different provider/model for
+        # this gateway turn. Credentials and transport details remain
+        # host-owned: the callback sees only route identities, and Hermes
+        # resolves the target runtime inside the active profile scope.
+        if not self._runner._session_model_overrides.get(ctx.session_key):
+            try:
+                from hermes_cli.plugins import (
+                    get_gateway_model_route,
+                    has_hook as _has_plugin_hook,
+                )
+
+                if _has_plugin_hook("transform_gateway_model_route"):
+                    conversation_id = str(ctx.session_id or "")
+                    session_db = getattr(self._runner, "_session_db", None)
+                    if session_db is not None and conversation_id:
+                        try:
+                            lineage = session_db._db.get_compression_lineage(
+                                conversation_id
+                            )
+                            if lineage:
+                                conversation_id = str(lineage[0])
+                        except Exception:
+                            logger.debug(
+                                "Could not resolve compression lineage for "
+                                "plugin model routing",
+                                exc_info=True,
+                            )
+                    profile_name = str(
+                        getattr(ctx.source, "profile", "") or ""
+                    ).strip()
+                    if not profile_name:
+                        profile_name = str(
+                            self._runner._profile_name_for_source(ctx.source) or ""
+                        ).strip()
+                    route = get_gateway_model_route(
+                        message=str(ctx.message or ""),
+                        session_key=str(ctx.session_key or ""),
+                        session_id=str(ctx.session_id or ""),
+                        conversation_id=conversation_id,
+                        platform=platform_key,
+                        profile_name=(
+                            profile_name or self._runner._active_profile_name()
+                        ),
+                        primary_model=str(model or ""),
+                        primary_provider=str(runtime_kwargs.get("provider") or ""),
+                    )
+                    if route is not None:
+                        target_runtime = _resolve_runtime_agent_kwargs_for_provider(
+                            route["provider"],
+                            target_model=route["model"],
+                        )
+                        model = route["model"]
+                        runtime_kwargs = target_runtime
+                        logger.info(
+                            "Plugin model route selected provider=%s model=%s "
+                            "session=%s reason=%s",
+                            target_runtime.get("provider") or route["provider"],
+                            model,
+                            ctx.session_key or "",
+                            route.get("reason") or "",
+                        )
+            except Exception:
+                logger.warning(
+                    "Plugin model route failed open to the primary route",
+                    exc_info=True,
+                )
 
         pr = self._runner._provider_routing
         reasoning_config = self._runner._resolve_session_reasoning_config(
@@ -8917,7 +8990,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 )
             elif smart_route.get("model"):
                 route["model"] = smart_route["model"]
-                route["runtime"] = dict(smart_route.get("runtime") or route["runtime"])
+                route["runtime"] = dict(
+                    smart_route.get("runtime") or route["runtime"]
+                )
             route["signature"] = (
                 route["model"],
                 route["runtime"].get("provider"),
@@ -8970,8 +9045,6 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         if not normalize_model_routing_config(routing_cfg)["enabled"]:
             return None
 
-        # Rehydrate first so a persisted /model override pauses routing after
-        # restart. All provider/secret resolution stays in the worker thread.
         await asyncio.to_thread(
             self._rehydrate_session_model_override, session_key
         )

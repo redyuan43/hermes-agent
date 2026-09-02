@@ -12029,6 +12029,107 @@ def mark_notify_item_delivered(
         )
 
 
+def replace_notify_sub_route(
+    conn: sqlite3.Connection,
+    *,
+    task_id: str,
+    platform: str,
+    chat_id: str,
+    thread_id: Optional[str],
+    claimed_cursor: int,
+    old_cursor: int,
+    route: Mapping[str, Any],
+) -> Optional[dict]:
+    """Atomically replace a claimed notification route.
+
+    The replacement destination is supplied by policy outside the board
+    database. This helper owns only the generic subscription-row transition
+    and cursor rewind needed for retrying the same event on the new route.
+    """
+    new_platform = str(route.get("platform") or "").strip().lower()
+    new_chat_id = str(route.get("chat_id") or "").strip()
+    if not new_platform or not new_chat_id:
+        return None
+    new_thread_id = str(route.get("thread_id") or "").strip()
+    delivery_mode = str(route.get("delivery_mode") or "notify").strip()
+    if delivery_mode not in _NOTIFY_DELIVERY_MODES:
+        delivery_mode = "notify"
+    metadata_json = _encode_notify_delivery_metadata(
+        route.get("delivery_metadata")
+        if isinstance(route.get("delivery_metadata"), Mapping)
+        else None
+    )
+    with write_txn(conn):
+        row = conn.execute(
+            "SELECT 1 FROM kanban_notify_subs WHERE task_id = ? "
+            "AND platform = ? AND chat_id = ? AND thread_id = ? "
+            "AND last_event_id = ?",
+            (
+                task_id,
+                platform,
+                chat_id,
+                thread_id or "",
+                int(claimed_cursor),
+            ),
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute(
+            "DELETE FROM kanban_notify_subs WHERE task_id = ? "
+            "AND platform = ? AND chat_id = ? AND thread_id = ?",
+            (task_id, platform, chat_id, thread_id or ""),
+        )
+        conn.execute(
+            """
+            INSERT INTO kanban_notify_subs
+                (task_id, platform, chat_id, thread_id, user_id, user_id_alt,
+                 chat_type, notifier_profile, delivery_mode,
+                 delivery_metadata, created_at, last_event_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(task_id, platform, chat_id, thread_id) DO UPDATE SET
+                last_event_id = MIN(last_event_id, excluded.last_event_id),
+                user_id = COALESCE(user_id, excluded.user_id),
+                user_id_alt = COALESCE(user_id_alt, excluded.user_id_alt),
+                chat_type = COALESCE(chat_type, excluded.chat_type),
+                notifier_profile = COALESCE(
+                    notifier_profile, excluded.notifier_profile
+                ),
+                delivery_mode = excluded.delivery_mode,
+                delivery_metadata = COALESCE(
+                    excluded.delivery_metadata, delivery_metadata
+                )
+            """,
+            (
+                task_id,
+                new_platform,
+                new_chat_id,
+                new_thread_id,
+                route.get("user_id"),
+                route.get("user_id_alt"),
+                str(route.get("chat_type") or "dm"),
+                route.get("notifier_profile"),
+                delivery_mode,
+                metadata_json,
+                int(time.time()),
+                int(old_cursor),
+            ),
+        )
+    return {
+        "task_id": task_id,
+        "platform": new_platform,
+        "chat_id": new_chat_id,
+        "thread_id": new_thread_id,
+        "user_id": route.get("user_id"),
+        "user_id_alt": route.get("user_id_alt"),
+        "chat_type": str(route.get("chat_type") or "dm"),
+        "notifier_profile": route.get("notifier_profile"),
+        "delivery_mode": delivery_mode,
+        "delivery_metadata": dict(route.get("delivery_metadata") or {}),
+        "created_at": int(time.time()),
+        "last_event_id": int(old_cursor),
+    }
+
+
 def activate_notify_fallback(
     conn: sqlite3.Connection,
     *,

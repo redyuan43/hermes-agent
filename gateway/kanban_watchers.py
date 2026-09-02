@@ -230,6 +230,9 @@ class GatewayKanbanWatchersMixin:
                     cursor,
                     old_cursor,
                     board_slug,
+                    operation,
+                    fails,
+                    failure_reason,
                 )
                 if fallback:
                     logger.warning(
@@ -978,10 +981,35 @@ class GatewayKanbanWatchersMixin:
         claimed_cursor: int,
         old_cursor: int,
         board: Optional[str] = None,
+        operation: str = "send",
+        failures: int = 1,
+        reason: str = "",
     ) -> Optional[dict]:
         from hermes_cli import kanban_db as _kb
+        from hermes_cli.plugins import get_kanban_delivery_fallback
+
+        route = get_kanban_delivery_fallback(
+            task_id=sub["task_id"],
+            event_id=int(claimed_cursor),
+            board=board or "",
+            subscription=dict(sub),
+            operation=operation,
+            failures=int(failures),
+            reason=reason,
+        )
         conn = _kb.connect(board=board)
         try:
+            if route is not None:
+                return _kb.replace_notify_sub_route(
+                    conn,
+                    task_id=sub["task_id"],
+                    platform=sub["platform"],
+                    chat_id=sub["chat_id"],
+                    thread_id=sub.get("thread_id") or "",
+                    claimed_cursor=claimed_cursor,
+                    old_cursor=old_cursor,
+                    route=route,
+                )
             return _kb.activate_notify_fallback(
                 conn,
                 task_id=sub["task_id"],
@@ -998,6 +1026,17 @@ class GatewayKanbanWatchersMixin:
         self, sub: dict, event_id: int, item_key: str,
         board: Optional[str] = None,
     ) -> bool:
+        from hermes_cli.plugins import should_skip_kanban_delivery_item
+
+        payload = {
+            "task_id": sub["task_id"],
+            "event_id": int(event_id),
+            "item_key": item_key,
+            "board": board or "",
+            "subscription": dict(sub),
+        }
+        if should_skip_kanban_delivery_item(**payload):
+            return True
         from hermes_cli import kanban_db as _kb
         conn = _kb.connect(board=board)
         try:
@@ -1017,6 +1056,13 @@ class GatewayKanbanWatchersMixin:
         self, sub: dict, event_id: int, item_key: str,
         board: Optional[str] = None,
     ) -> None:
+        payload = {
+            "task_id": sub["task_id"],
+            "event_id": int(event_id),
+            "item_key": item_key,
+            "board": board or "",
+            "subscription": dict(sub),
+        }
         from hermes_cli import kanban_db as _kb
         conn = _kb.connect(board=board)
         try:
@@ -1031,6 +1077,9 @@ class GatewayKanbanWatchersMixin:
             )
         finally:
             conn.close()
+        from hermes_cli.plugins import notify_kanban_delivery_item_delivered
+
+        notify_kanban_delivery_item_delivered(**payload)
 
     @staticmethod
     def _kanban_require_send_success(result: Any, item: str) -> None:
