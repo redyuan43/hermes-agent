@@ -235,3 +235,9 @@ def test_seam_rejects_wrong_token_401():
     assert resp.status_code == 401
 
 
+def test_route_prefix_matches_only_its_slash_delimited_namespace():
+    token_auth.register_token_route_prefix("/api/model/")
+
+    assert token_auth.is_token_route("/api/model/info")
+    assert not token_auth.is_token_route("/api/models")
+

@@ -1,0 +1,7 @@
+name: gateway-key
+version: 1.0.0
+description: "Authenticates selected Dashboard APIs with the existing Gateway API_SERVER_KEY."
+author: SIYUAN
+kind: backend
+requires_env:
+  - API_SERVER_KEY

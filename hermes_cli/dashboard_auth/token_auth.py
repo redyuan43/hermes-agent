@@ -54,6 +54,7 @@ _log = logging.getLogger(__name__)
 # Exact paths that accept non-interactive bearer-token auth. A route registers
 # itself here at import/startup; the seam only acts on registered paths.
 _token_routes: set[str] = set()
+_token_route_prefixes: set[str] = set()
 _lock = threading.Lock()
 
 
@@ -68,16 +69,27 @@ def register_token_route(path: str) -> None:
         _token_routes.add(path)
 
 
-def is_token_route(path: str) -> bool:
-    """True if ``path`` was registered as token-authable (exact match)."""
+def register_token_route_prefix(prefix: str) -> None:
+    """Mark a slash-terminated path prefix as token-authable."""
+    if not prefix.startswith("/") or not prefix.endswith("/"):
+        raise ValueError("token route prefixes must start and end with '/'")
     with _lock:
-        return path in _token_routes
+        _token_route_prefixes.add(prefix)
+
+
+def is_token_route(path: str) -> bool:
+    """True if ``path`` matches a registered exact route or safe prefix."""
+    with _lock:
+        return path in _token_routes or any(
+            path.startswith(prefix) for prefix in _token_route_prefixes
+        )
 
 
 def clear_token_routes() -> None:
     """Test-only: drop all registered token routes."""
     with _lock:
         _token_routes.clear()
+        _token_route_prefixes.clear()
 
 
 def _client_ip(request: Request) -> str:
