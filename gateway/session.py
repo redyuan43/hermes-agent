@@ -871,6 +871,10 @@ class SessionEntry:
     # (see sanitize_model_override / SessionStore.set_model_override).
     model_override: Optional[Dict[str, str]] = None
 
+    # Durable smart-routing state. Contains only the pinned profile and pause
+    # flag; provider credentials are always re-resolved at runtime.
+    routing_state: Optional[Dict[str, str]] = None
+
     def to_dict(self) -> Dict[str, Any]:
         result = {
             "session_key": self.session_key,
@@ -914,6 +918,12 @@ class SessionEntry:
             # Defence-in-depth: strip credentials even if a caller stored an
             # unsanitized dict directly on the entry.
             result["model_override"] = sanitize_model_override(self.model_override)
+        if self.routing_state:
+            result["routing_state"] = {
+                key: str(value)
+                for key, value in self.routing_state.items()
+                if key in {"base_profile", "paused"} and value not in (None, "")
+            }
         if self.origin:
             result["origin"] = self.origin.to_dict()
         return result
@@ -1003,6 +1013,15 @@ class SessionEntry:
             reset_had_activity=data.get("reset_had_activity", False),
             prev_session_id=data.get("prev_session_id"),
             model_override=sanitize_model_override(data.get("model_override")),
+            routing_state=(
+                {
+                    key: str(value)
+                    for key, value in data.get("routing_state", {}).items()
+                    if key in {"base_profile", "paused"}
+                }
+                if isinstance(data.get("routing_state"), dict)
+                else None
+            ),
         )
 
 
@@ -3129,6 +3148,39 @@ class SessionStore:
             if entry is None:
                 return None
             return dict(entry.model_override) if entry.model_override else None
+
+    def set_routing_state(
+        self,
+        session_key: str,
+        state: Optional[Dict[str, Any]],
+    ) -> None:
+        """Persist the non-secret smart-routing state for one session."""
+        with self._lock:
+            self._ensure_loaded_locked()
+            entry = self._entries.get(session_key)
+            if entry is None:
+                return
+            cleaned = {
+                key: str(value)
+                for key, value in (state or {}).items()
+                if key in {"base_profile", "paused"} and value not in (None, "")
+            } or None
+            if entry.routing_state == cleaned:
+                return
+            entry.routing_state = cleaned
+            self._save()
+
+    def get_routing_state(
+        self,
+        session_key: str,
+    ) -> Optional[Dict[str, str]]:
+        """Return a copy of the persisted smart-routing state."""
+        with self._lock:
+            self._ensure_loaded_locked()
+            entry = self._entries.get(session_key)
+            if entry is None or not entry.routing_state:
+                return None
+            return dict(entry.routing_state)
 
     def suspend_session(self, session_key: str) -> bool:
         """Mark a session as suspended so it auto-resets on next access.

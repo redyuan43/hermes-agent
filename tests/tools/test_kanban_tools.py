@@ -990,11 +990,11 @@ def test_create_uses_configured_completion_delivery(monkeypatch, worker_env, tmp
     from gateway import session_context
 
     session_context.set_session_vars(
-        platform="",
-        chat_id="",
-        thread_id="",
-        user_id="",
-        profile="",
+        platform="matrix",
+        chat_id="!origin:example.test",
+        thread_id="t-42",
+        user_id="user-99",
+        profile="matrix-tech",
     )
 
     try:

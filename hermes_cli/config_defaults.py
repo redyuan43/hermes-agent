@@ -6,6 +6,28 @@ verbatim from hermes_cli/config.py. Must not import from hermes_cli.config.
 
 DEFAULT_CONFIG = {
     "model": "",
+    # Optional gateway-only classifier routing. Disabled by default so the
+    # normal model path and its prompt cache remain unchanged.
+    "smart_model_routing": {
+        "enabled": False,
+        "classifier": {
+            "provider": "",
+            "model": "",
+            "base_url": "",
+            "api_mode": "",
+        },
+        "profiles": {
+            "luna": {"provider": "", "model": ""},
+            "terra": {"provider": "", "model": ""},
+            "sol": {"provider": "", "model": ""},
+        },
+        "moa": {"preset": "default"},
+        "trace": {
+            "enabled": True,
+            "dir": "",
+            "retention_days": 7,
+        },
+    },
     "providers": {},
     "fallback_providers": [],
     "credential_pool_strategies": {},
@@ -2830,6 +2852,12 @@ DEFAULT_CONFIG = {
         # behaviour — e.g. for a profile that prefers explicit
         # ``kanban_notify-subscribe`` calls per task.
         "auto_subscribe_on_create": True,
+        # Optional profile-local allowlist for kanban_create assignees. An
+        # empty list preserves unrestricted orchestration behavior.
+        "allowed_assignees": [],
+        # Optional stable destination for terminal task notifications. Set
+        # use_home_channel to resolve the selected profile's platform home.
+        "completion_delivery": {},
         # Run the dispatcher inside the gateway process. On by default —
         # the cost is ~300µs every `dispatch_interval_seconds` when idle,
         # and gateway is the supervisor users already have. Set to false

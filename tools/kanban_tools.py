@@ -31,6 +31,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Optional
 
 from agent.redact import redact_sensitive_text
@@ -1358,6 +1360,34 @@ def _handle_create(args: dict, **kw) -> str:
             "assignee is required — name the profile that should execute this "
             "task (the dispatcher will only spawn tasks with an assignee)"
         )
+    assignee = str(assignee).strip()
+    if not assignee:
+        return tool_error("assignee must not be empty")
+    allowed_assignees = _configured_allowed_assignees()
+    if allowed_assignees and assignee not in allowed_assignees:
+        return tool_error(
+            f"assignee '{assignee}' is not allowed for this profile. "
+            f"Allowed profiles: {', '.join(sorted(allowed_assignees))}"
+        )
+    delivery_override = args.get("delivery")
+    resolved_delivery = None
+    if delivery_override is not None:
+        try:
+            resolved_delivery = _resolve_completion_delivery(delivery_override)
+        except ValueError as exc:
+            return tool_error(f"invalid delivery: {exc}")
+    else:
+        configured_delivery = _configured_completion_delivery()
+        if configured_delivery is not None:
+            try:
+                resolved_delivery = _resolve_completion_delivery(
+                    configured_delivery
+                )
+            except ValueError as exc:
+                logger.warning(
+                    "invalid kanban.completion_delivery; using origin chat: %s",
+                    exc,
+                )
     body = args.get("body")
     parents = args.get("parents") or []
     tenant = args.get("tenant") or os.environ.get("HERMES_TENANT")
@@ -1437,7 +1467,7 @@ def _handle_create(args: dict, **kw) -> str:
                 conn,
                 title=str(title).strip(),
                 body=body,
-                assignee=str(assignee),
+                assignee=assignee,
                 parents=tuple(parents),
                 tenant=tenant,
                 priority=int(priority) if priority is not None else 0,
@@ -1463,7 +1493,14 @@ def _handle_create(args: dict, **kw) -> str:
                 session_id=session_id,
             )
             new_task = kb.get_task(conn, new_tid)
-            subscribed = _maybe_auto_subscribe(conn, new_tid)
+            if resolved_delivery is not None:
+                subscribed = _subscribe_completion_delivery(
+                    conn,
+                    new_tid,
+                    resolved_delivery,
+                )
+            else:
+                subscribed = _maybe_auto_subscribe(conn, new_tid)
             return _ok(
                 task_id=new_tid,
                 status=new_task.status if new_task else None,
@@ -1479,6 +1516,163 @@ def _handle_create(args: dict, **kw) -> str:
     except Exception as e:
         logger.exception("kanban_create failed")
         return tool_error(f"kanban_create: {e}")
+
+
+def _configured_allowed_assignees() -> set[str]:
+    """Return an optional profile-local allowlist for Kanban assignees."""
+    try:
+        cfg = load_config()
+        raw = cfg_get(cfg, "kanban", "allowed_assignees", default=[])
+    except Exception:
+        return set()
+    if isinstance(raw, str):
+        values = raw.split(",")
+    elif isinstance(raw, (list, tuple, set)):
+        values = raw
+    else:
+        return set()
+    return {str(value).strip() for value in values if str(value).strip()}
+
+
+def _configured_completion_delivery() -> Optional[dict]:
+    try:
+        cfg = load_config()
+        delivery = cfg_get(cfg, "kanban", "completion_delivery", default=None)
+    except Exception:
+        return None
+    if not delivery:
+        return None
+    if not isinstance(delivery, dict):
+        logger.warning("kanban completion_delivery must be a mapping")
+        return None
+    return delivery
+
+
+@contextmanager
+def _delivery_profile_scope(sender_profile: str):
+    from agent.secret_scope import (
+        build_profile_secret_scope,
+        reset_secret_scope,
+        set_secret_scope,
+    )
+    from hermes_constants import (
+        reset_hermes_home_override,
+        set_hermes_home_override,
+    )
+    from hermes_cli.profiles import get_profile_dir
+
+    profile_home = get_profile_dir(sender_profile)
+    home_token = set_hermes_home_override(profile_home)
+    secret_token = set_secret_scope(build_profile_secret_scope(Path(profile_home)))
+    try:
+        yield
+    finally:
+        reset_secret_scope(secret_token)
+        reset_hermes_home_override(home_token)
+
+
+def _resolve_completion_delivery(delivery: Any) -> dict:
+    """Validate and resolve a task/default completion destination."""
+    if not isinstance(delivery, dict):
+        raise ValueError("must be an object")
+    sender_profile = str(delivery.get("sender_profile") or "").strip()
+    platform = str(delivery.get("platform") or "").strip().lower()
+    chat_id = str(delivery.get("chat_id") or "").strip()
+    use_home_channel = delivery.get("use_home_channel") is True
+    if not sender_profile:
+        raise ValueError("sender_profile is required")
+    if not platform:
+        raise ValueError("platform is required")
+    if bool(chat_id) == use_home_channel:
+        raise ValueError("set exactly one of chat_id or use_home_channel=true")
+
+    from gateway.config import Platform, load_gateway_config
+    from hermes_cli.profiles import profile_exists
+
+    if not profile_exists(sender_profile):
+        raise ValueError(f"sender_profile '{sender_profile}' does not exist")
+    try:
+        platform_enum = Platform(platform)
+    except ValueError as exc:
+        raise ValueError(f"unknown platform '{platform}'") from exc
+    if use_home_channel:
+        try:
+            with _delivery_profile_scope(sender_profile):
+                home = load_gateway_config().get_home_channel(platform_enum)
+        except Exception as exc:
+            raise ValueError(
+                f"could not resolve {sender_profile}/{platform} home channel: "
+                f"{exc}"
+            ) from exc
+        chat_id = str(home.chat_id).strip() if home else ""
+        if not chat_id:
+            raise ValueError(
+                f"{sender_profile} has no home channel for {platform}"
+            )
+    return {
+        "sender_profile": sender_profile,
+        "platform": platform,
+        "chat_id": chat_id,
+        "thread_id": str(delivery.get("thread_id") or "").strip() or None,
+    }
+
+
+def _origin_delivery() -> Optional[dict]:
+    try:
+        from gateway.session_context import get_session_env
+
+        platform = get_session_env("HERMES_SESSION_PLATFORM", "")
+        chat_id = get_session_env("HERMES_SESSION_CHAT_ID", "")
+        if not platform or not chat_id:
+            session_key = (
+                get_session_env("HERMES_SESSION_KEY", "")
+                or os.environ.get("HERMES_SESSION_KEY", "")
+            )
+            if not session_key:
+                return None
+            platform, chat_id = "tui", session_key
+        return {
+            "platform": platform,
+            "chat_id": chat_id,
+            "thread_id": get_session_env("HERMES_SESSION_THREAD_ID", "") or None,
+            "user_id": get_session_env("HERMES_SESSION_USER_ID", "") or None,
+            "sender_profile": (
+                get_session_env("HERMES_SESSION_PROFILE", "")
+                or os.environ.get("HERMES_PROFILE")
+            ),
+        }
+    except Exception:
+        return None
+
+
+def _subscribe_completion_delivery(
+    conn: Any,
+    task_id: str,
+    delivery: dict,
+) -> bool:
+    try:
+        from hermes_cli import kanban_db as _kb
+
+        fallback = _origin_delivery()
+        _kb.add_notify_sub(
+            conn,
+            task_id=task_id,
+            platform=delivery["platform"],
+            chat_id=delivery["chat_id"],
+            thread_id=delivery.get("thread_id"),
+            notifier_profile=delivery["sender_profile"],
+            fallback_platform=fallback.get("platform") if fallback else None,
+            fallback_chat_id=fallback.get("chat_id") if fallback else None,
+            fallback_thread_id=fallback.get("thread_id") if fallback else None,
+            fallback_user_id=fallback.get("user_id") if fallback else None,
+            fallback_notifier_profile=(
+                fallback.get("sender_profile") if fallback else None
+            ),
+        )
+        return True
+    except Exception as exc:
+        logger.warning("kanban completion_delivery subscription failed: %s", exc)
+        return False
 
 
 def _maybe_auto_subscribe(conn: Any, task_id: str) -> bool:
@@ -2302,6 +2496,39 @@ KANBAN_CREATE_SCHEMA = {
                     "the profile's provider and will fail if it belongs "
                     "to a different one. Requires 'model'."
                 ),
+            },
+            "delivery": {
+                "type": "object",
+                "description": (
+                    "Optional completion destination. Overrides this profile's "
+                    "kanban.completion_delivery for this task."
+                ),
+                "properties": {
+                    "sender_profile": {
+                        "type": "string",
+                        "description": "Gateway profile whose bot sends the result.",
+                    },
+                    "platform": {
+                        "type": "string",
+                        "description": "Messaging platform, such as matrix or weixin.",
+                    },
+                    "chat_id": {
+                        "type": "string",
+                        "description": "Explicit destination chat or room id.",
+                    },
+                    "thread_id": {
+                        "type": "string",
+                        "description": "Optional destination thread/topic id.",
+                    },
+                    "use_home_channel": {
+                        "type": "boolean",
+                        "description": (
+                            "Resolve the platform home channel from sender_profile."
+                        ),
+                    },
+                },
+                "required": ["sender_profile", "platform"],
+                "additionalProperties": False,
             },
             "board": _board_schema_prop(),
         },
